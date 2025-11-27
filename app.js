@@ -6042,12 +6042,11 @@ class DxfPhotoEditor {
                 }
             }
             
-            // 현재 위치 중심으로 확대
-            const currentZoom = this.map.getZoom();
+            // 현재 위치를 화면 중심으로 이동
             this.map.setCenter(currentLocation);
-            this.map.setZoom(Math.max(currentZoom, 15));
+            this.map.setZoom(15); // 고정 줌 레벨로 현재 위치 중심 표시
             
-            // 현재 위치 마커 생성 (지도 위)
+            // 현재 위치 마커 생성 (지도 위) - 핀 이모지 사용
             this.currentLocationMarker = new google.maps.Marker({
                 position: currentLocation,
                 map: this.map,
@@ -6095,8 +6094,30 @@ class DxfPhotoEditor {
             
             // DXF 도면 위에도 현재 위치 표시 (Canvas로 그리기)
             if (this.dxfData && this.currentLocationData.dxfX !== null && this.currentLocationData.dxfY !== null) {
+                // 현재 위치를 화면 중심으로 이동
+                const rect = this.getCachedRect();
+                if (rect) {
+                    // 현재 위치 DXF 좌표를 ViewBox 좌표로 변환 (Y축 반전)
+                    const currentLocationViewBoxX = this.currentLocationData.dxfX;
+                    const currentLocationViewBoxY = -this.currentLocationData.dxfY; // Y축 반전
+                    
+                    // 화면 중심 좌표를 ViewBox 좌표로 변환
+                    const centerViewBoxX = this.viewBox.x + this.viewBox.width / 2;
+                    const centerViewBoxY = this.viewBox.y + this.viewBox.height / 2;
+                    
+                    // ViewBox를 현재 위치 중심으로 이동
+                    const deltaX = centerViewBoxX - currentLocationViewBoxX;
+                    const deltaY = centerViewBoxY - currentLocationViewBoxY;
+                    
+                    this.viewBox.x += deltaX;
+                    this.viewBox.y += deltaY;
+                    
+                    // ViewBox 업데이트
+                    this.updateViewBox();
+                }
+                
                 this.redraw(); // Canvas 다시 그리기 (현재 위치 마커 포함)
-                console.log('✅ 현재 위치 DXF 도면 위에 표시 완료');
+                console.log('✅ 현재 위치 DXF 도면 위에 표시 완료 (화면 중심)');
             }
             
             console.log('✅ 현재 위치 표시 완료 (정확도: ' + accuracy.toFixed(0) + 'm)');
@@ -6201,6 +6222,31 @@ class DxfPhotoEditor {
         if (!this.currentLocationInfoWindow) {
             this.currentLocationInfoWindow = new google.maps.InfoWindow({
                 maxWidth: isMobile ? 280 : 320
+            });
+            
+            // InfoWindow가 열릴 때 닫기 버튼(X) 제거
+            google.maps.event.addListener(this.currentLocationInfoWindow, 'domready', () => {
+                // InfoWindow 패널 내에서 닫기 버튼 찾아서 DOM에서 완전히 제거
+                setTimeout(() => {
+                    // 모든 닫기 버튼 찾기 (InfoWindow 내부)
+                    const closeButtons = document.querySelectorAll('.gm-ui-hover-effect');
+                    closeButtons.forEach(btn => {
+                        // 닫기 버튼인지 확인 (aria-label이나 title 확인)
+                        const ariaLabel = btn.getAttribute('aria-label') || '';
+                        const title = btn.getAttribute('title') || '';
+                        
+                        // 닫기 버튼인지 확인 (다양한 언어/형식 지원)
+                        const isCloseButton = 
+                            ariaLabel.toLowerCase().includes('close') || 
+                            ariaLabel.includes('닫기') ||
+                            title.toLowerCase().includes('close') ||
+                            title.includes('닫기');
+                        
+                        if (isCloseButton) {
+                            btn.remove(); // DOM에서 완전히 제거 (CSS 숨김이 아닌 실제 제거)
+                        }
+                    });
+                }, 100); // DOM 렌더링 완료 대기
             });
         }
         this.currentLocationInfoWindow.setContent(infoContent);
