@@ -3756,116 +3756,128 @@ class DxfPhotoEditor {
                 const pixelCount = width * height;
                 const targetBytes = targetSize;
                 
-                // Base64 DataURL 문자열 길이를 실제 바이너리 크기로 변환
-                // DataURL 형식: "data:image/jpeg;base64,{base64_data}"
-                // 접두사 길이: 약 23자
-                // Base64 데이터 길이 = (전체 길이 - 접두사) * 3/4 (Base64는 4바이트당 3바이트 인코딩)
-                // 실제로는 toDataURL() 결과를 Blob으로 변환하여 정확한 크기를 측정하는 것이 좋지만,
-                // 속도 최적화를 위해 근사치 사용
-                // 실험적 측정: DataURL 길이 * 0.73 ≈ 실제 바이너리 크기 (평균)
+                // 실제 Blob 크기를 정확히 측정하기 위한 헬퍼 함수
+                // Base64 DataURL을 Blob으로 변환하여 정확한 바이너리 크기 측정
+                const getActualBlobSize = async (dataUrl) => {
+                    try {
+                        const response = await fetch(dataUrl);
+                        const blob = await response.blob();
+                        return blob.size; // 실제 바이너리 크기
+                    } catch (error) {
+                        // 오류 시 근사치 사용 (Base64 변환)
+                        const dataUrlPrefixLength = 23;
+                        const base64Length = Math.max(0, dataUrl.length - dataUrlPrefixLength);
+                        return Math.floor(base64Length * 0.75);
+                    }
+                };
+                
+                // Base64 DataURL 크기를 근사치로 변환 (빠른 추정용)
                 const dataUrlPrefixLength = 23; // "data:image/jpeg;base64," 길이
-                const base64ToBytesRatio = (length) => {
-                    // Base64 데이터 부분만 추출하여 변환
-                    const base64Length = Math.max(0, length - dataUrlPrefixLength);
+                const estimateBlobSize = (dataUrlLength) => {
+                    const base64Length = Math.max(0, dataUrlLength - dataUrlPrefixLength);
                     return Math.floor(base64Length * 0.75); // Base64는 4바이트당 3바이트
                 };
                 
-                // 개선된 품질 추정 공식 (제안 사항 반영)
-                // 품질 = (목표 용량 / 픽셀 수)^(1/1.6) * 조정 계수
-                // 계수 0.4 사용 (더 정확한 예측)
-                // Base64 변환은 나중에 실제 크기 측정 시에만 사용
-                let estimatedQuality = Math.pow(targetBytes / (pixelCount * 0.4), 1/1.6);
-                estimatedQuality = Math.max(0.25, Math.min(0.95, estimatedQuality)); // 0.25 ~ 0.95 범위
+                // 품질 추정 공식 개선 - 2.5배 효과 반영
+                // 실제 저장되는 크기가 목표의 약 40%이므로, 목표 용량을 2.5배로 상향 조정하여 추정
+                const adjustedTargetSize = targetSize * 2.5; // 2.5배 상향 조정
                 
-                // 목표 용량에 따른 추가 조정 (더 정확하게)
+                // 품질 추정 공식 (계수 0.25 사용 - 더 높은 품질로 추정)
+                let estimatedQuality = Math.pow(adjustedTargetSize / (pixelCount * 0.25), 1/1.6);
+                estimatedQuality = Math.max(0.4, Math.min(0.95, estimatedQuality)); // 0.4 ~ 0.95 범위
+                
+                // 목표 용량에 따른 추가 조정 (2.5배 효과 보완)
                 if (targetSize <= 500 * 1024) {
-                    estimatedQuality *= 0.92; // 500KB는 약간 낮춤
+                    estimatedQuality *= 1.2; // 500KB는 품질을 더 높임
                 } else if (targetSize <= 1024 * 1024) {
-                    estimatedQuality *= 0.97; // 1MB는 거의 그대로
+                    estimatedQuality *= 1.15; // 1MB는 품질을 높임
                 } else {
-                    estimatedQuality *= 1.0; // 2MB 이상은 추정 그대로
+                    estimatedQuality *= 1.1; // 2MB 이상은 품질을 약간 높임
                 }
-                estimatedQuality = Math.max(0.25, Math.min(0.95, estimatedQuality));
+                estimatedQuality = Math.max(0.4, Math.min(0.95, estimatedQuality));
                 
-                this.debugLog(`   추정 품질: ${estimatedQuality.toFixed(2)} (목표: ${(targetSize / 1024).toFixed(0)}KB)`);
+                this.debugLog(`   추정 품질: ${estimatedQuality.toFixed(2)} (목표: ${(targetSize / 1024).toFixed(0)}KB, 조정된 목표: ${(adjustedTargetSize / 1024).toFixed(0)}KB)`);
                 
-                // 첫 압축
-                let quality = estimatedQuality;
-                let compressedData = canvas.toDataURL('image/jpeg', quality);
-                let compressedSize = base64ToBytesRatio(compressedData.length); // 실제 바이너리 크기 추정
-                
-                this.debugLog(`   첫 압축 (품질 ${quality.toFixed(2)}): ${(compressedSize / 1024).toFixed(2)}KB (DataURL: ${(compressedData.length / 1024).toFixed(2)}KB)`);
-                
-                // 이진 탐색 방식으로 품질 조정 (최대 3번 반복, 빠르게 수렴)
-                const tolerance = 0.08; // 목표 크기의 8% 오차 허용 (더 정확하게)
-                let minQuality = 0.2;
-                let maxQuality = 0.95;
-                let iterations = 0;
-                const maxIterations = 3; // 최대 3번 반복 (속도 최적화)
-                
-                while (iterations < maxIterations) {
-                    const diff = compressedSize - targetSize;
-                    const diffRatio = Math.abs(diff) / targetSize;
-                    
-                    // 목표 범위 내에 있으면 종료
-                    if (diffRatio <= tolerance) {
-                        break;
-                    }
-                    
-                    iterations++;
-                    
-                    if (compressedSize > targetSize) {
-                        // 목표보다 크면 품질 낮춤
-                        maxQuality = quality;
-                        quality = (minQuality + quality) / 2;
-                    } else {
-                        // 목표보다 작으면 품질 높임 (하지만 너무 작으면 허용 범위 내에서 그만둠)
-                        if (diffRatio > 0.3) {
-                            // 30% 이상 작을 때만 품질 높임
-                            minQuality = quality;
-                            quality = (quality + maxQuality) / 2;
-                        } else {
-                            // 목표보다 약간 작지만 허용 범위 내면 그만둠
-                            break;
+                // async IIFE로 실제 Blob 크기 측정 수행
+                (async () => {
+                    try {
+                        // 첫 압축 - 실제 Blob 크기로 정확히 측정
+                        let quality = estimatedQuality;
+                        let compressedData = canvas.toDataURL('image/jpeg', quality);
+                        let compressedSize = await getActualBlobSize(compressedData); // 실제 Blob 크기 측정
+                        
+                        this.debugLog(`   첫 압축 (품질 ${quality.toFixed(2)}): ${(compressedSize / 1024).toFixed(2)}KB (목표: ${(targetSize / 1024).toFixed(0)}KB)`);
+                        
+                        // 이진 탐색 방식으로 품질 조정 (최대 2번 반복으로 속도 최적화)
+                        const tolerance = 0.12; // 목표 크기의 12% 오차 허용 (속도와 정확도 균형)
+                        let minQuality = 0.3;
+                        let maxQuality = 0.95;
+                        let iterations = 0;
+                        const maxIterations = 2; // 최대 2번 반복 (속도 최적화)
+                        
+                        while (iterations < maxIterations) {
+                            const diff = compressedSize - targetSize;
+                            const diffRatio = Math.abs(diff) / targetSize;
+                            
+                            // 목표 범위 내에 있으면 종료
+                            if (diffRatio <= tolerance) {
+                                break;
+                            }
+                            
+                            iterations++;
+                            
+                            if (compressedSize > targetSize) {
+                                // 목표보다 크면 품질 낮춤
+                                maxQuality = quality;
+                                quality = (minQuality + quality) / 2;
+                            } else {
+                                // 목표보다 작으면 품질 높임
+                                minQuality = quality;
+                                quality = (quality + maxQuality) / 2;
+                            }
+                            
+                            quality = Math.max(0.3, Math.min(0.95, quality));
+                            compressedData = canvas.toDataURL('image/jpeg', quality);
+                            compressedSize = await getActualBlobSize(compressedData); // 실제 Blob 크기 측정
+                            
+                            this.debugLog(`   조정 ${iterations} (품질 ${quality.toFixed(2)}): ${(compressedSize / 1024).toFixed(2)}KB`);
                         }
+                        
+                        // 여전히 목표보다 작으면 이미지 크기를 추가로 확대 (목표 용량 달성을 위해)
+                        if (compressedSize < targetSize * 0.7) {
+                            this.debugLog('   ⚠️ 품질 조정만으로 부족 - 이미지 크기 추가 확대');
+                            // 목표 크기에 맞추기 위해 정확한 비율 계산
+                            const scaleFactor = Math.sqrt(targetSize / compressedSize) * 1.05;
+                            width = Math.floor(width * scaleFactor);
+                            height = Math.floor(height * scaleFactor);
+                            canvas.width = width;
+                            canvas.height = height;
+                            ctx.clearRect(0, 0, width, height);
+                            ctx.drawImage(image, 0, 0, width, height);
+                            
+                            // 확대 후 품질 재추정 (2.5배 효과 반영)
+                            const newPixelCount = width * height;
+                            const newAdjustedTargetSize = targetSize * 2.5;
+                            quality = Math.pow(newAdjustedTargetSize / (newPixelCount * 0.25), 1/1.6);
+                            quality = Math.max(0.4, Math.min(0.9, quality));
+                            compressedData = canvas.toDataURL('image/jpeg', quality);
+                            compressedSize = await getActualBlobSize(compressedData);
+                            this.debugLog(`   크기 확대 후 압축 (품질 ${quality.toFixed(2)}): ${(compressedSize / 1024).toFixed(2)}KB`);
+                        }
+                        
+                        // 최종 크기 확인 (실제 Blob 크기)
+                        const finalSizeKB = (compressedSize / 1024).toFixed(2);
+                        const targetSizeKB = (targetSize / 1024).toFixed(2);
+                        const diffRatio = Math.abs(compressedSize - targetSize) / targetSize;
+                        const accuracy = ((1 - diffRatio) * 100).toFixed(1);
+                        this.debugLog(`   ✅ 최종 압축 완료: ${finalSizeKB}KB / 목표: ${targetSizeKB}KB (정확도: ${accuracy}%, 품질: ${quality.toFixed(2)})`);
+                        
+                        resolve(compressedData);
+                    } catch (error) {
+                        console.error('   ❌ 이미지 압축 오류:', error);
+                        reject(new Error('이미지 압축 실패: ' + error.message));
                     }
-                    
-                    quality = Math.max(0.2, Math.min(0.95, quality));
-                    compressedData = canvas.toDataURL('image/jpeg', quality);
-                    compressedSize = base64ToBytesRatio(compressedData.length);
-                    
-                    this.debugLog(`   조정 ${iterations} (품질 ${quality.toFixed(2)}): ${(compressedSize / 1024).toFixed(2)}KB`);
-                }
-                
-                // 여전히 목표보다 크면 이미지 크기를 추가로 축소 (최후의 수단)
-                if (compressedSize > targetSize * 1.2) {
-                    this.debugLog('   ⚠️ 품질 조정만으로 부족 - 이미지 크기 추가 축소');
-                    // 목표 크기에 맞추기 위해 정확한 비율 계산
-                    const scaleFactor = Math.sqrt(targetSize / compressedSize) * 0.95;
-                    width = Math.floor(width * scaleFactor);
-                    height = Math.floor(height * scaleFactor);
-                    canvas.width = width;
-                    canvas.height = height;
-                    ctx.clearRect(0, 0, width, height);
-                    ctx.drawImage(image, 0, 0, width, height);
-                    
-                    // 축소 후 품질 재추정 (더 정확하게)
-                    const newPixelCount = width * height;
-                    quality = Math.pow(targetBytes / (newPixelCount * 0.4), 1/1.6);
-                    quality = Math.max(0.3, Math.min(0.9, quality));
-                    compressedData = canvas.toDataURL('image/jpeg', quality);
-                    compressedSize = base64ToBytesRatio(compressedData.length);
-                    this.debugLog(`   크기 축소 후 압축 (품질 ${quality.toFixed(2)}): ${(compressedSize / 1024).toFixed(2)}KB`);
-                }
-                
-                const finalSize = base64ToBytesRatio(compressedData.length);
-                const finalSizeKB = (finalSize / 1024).toFixed(2);
-                const targetSizeKB = (targetSize / 1024).toFixed(2);
-                const diffRatio = Math.abs(finalSize - targetSize) / targetSize;
-                const accuracy = ((1 - diffRatio) * 100).toFixed(1);
-                this.debugLog(`   ✅ 최종 압축 완료: ${finalSizeKB}KB / 목표: ${targetSizeKB}KB (정확도: ${accuracy}%, 품질: ${quality.toFixed(2)})`);
-                
-                resolve(compressedData);
+                })();
             } catch (error) {
                 console.error('   ❌ 이미지 압축 오류:', error);
                 reject(new Error('이미지 압축 실패: ' + error.message));
