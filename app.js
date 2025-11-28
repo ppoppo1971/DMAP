@@ -2759,6 +2759,7 @@ class DxfPhotoEditor {
      * - Throttle 적용: 터치 이벤트가 매우 빈번해도 최대 60fps로 제한
      * - 중복 업데이트 방지: updatePending 플래그로 무한 루프 방지
      * - 지도 동기화 제외: 드래그/줌 중에는 지도 동기화 생략 (종료 시점에만 수행)
+     * - 핀치줌 중 사진 그리기 최적화: 핀치줌 중에는 사진 그리기를 더 낮은 프레임레이트로 제한
      * 
      * @see updateViewBoxThrottled - Throttle 적용된 버전 사용
      */
@@ -2770,6 +2771,9 @@ class DxfPhotoEditor {
         
         this.updatePending = true;
         
+        // 핀치줌 중인지 확인
+        const isPinching = this.touchState.isPinching;
+        
         requestAnimationFrame(() => {
             this.updatePending = false;
             
@@ -2777,8 +2781,13 @@ class DxfPhotoEditor {
             this.svg.setAttribute('viewBox', 
                 `${this.viewBox.x} ${this.viewBox.y} ${this.viewBox.width} ${this.viewBox.height}`);
             
-            // Canvas 사진만 다시 그리기 (빠름)
-            this.drawPhotosCanvas();
+            // 핀치줌 중에는 사진 그리기를 더 낮은 프레임레이트로 제한 (성능 최적화)
+            // 핀치줌이 끝나면 즉시 다시 그리기
+            if (!isPinching || !this._lastPhotoDrawTime || (Date.now() - this._lastPhotoDrawTime) > 100) {
+                // Canvas 사진만 다시 그리기 (빠름)
+                this.drawPhotosCanvas();
+                this._lastPhotoDrawTime = Date.now();
+            }
             
             // 지도 동기화는 드래그/줌 종료 시점에만 수행 (성능 최적화)
         });
@@ -4120,10 +4129,19 @@ class DxfPhotoEditor {
             
             // 상태 리셋
             this.touchState.isDragging = false;
+            const wasPinchingBeforeReset = this.touchState.isPinching;
             this.touchState.isPinching = false;
             this.touchState.lastTouch = null;
             this.touchState.anchorView = null;
             this.touchState.startViewBox = null;
+            
+            // 핀치줌 종료 시 사진 다시 그리기 (최신 상태 반영)
+            if (wasPinchingBeforeReset) {
+                this._lastPhotoDrawTime = 0; // 강제로 다시 그리기
+                requestAnimationFrame(() => {
+                    this.drawPhotosCanvas();
+                });
+            }
             
         } else if (touches.length === 1) {
             // 두 손가락에서 한 손가락으로 전환
@@ -4148,6 +4166,12 @@ class DxfPhotoEditor {
                         this.syncViewBoxToMapBounds();
                     }, 50);
                 }
+                
+                // 핀치줌 종료 시 사진 다시 그리기 (최신 상태 반영)
+                this._lastPhotoDrawTime = 0; // 강제로 다시 그리기
+                requestAnimationFrame(() => {
+                    this.drawPhotosCanvas();
+                });
             }
             
             // 드래그 재시작 준비
