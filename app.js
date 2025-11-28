@@ -560,20 +560,40 @@ class DxfPhotoEditor {
      * Visibility API를 활용한 백그라운드 모드 최적화
      * 성능 최적화: 페이지가 백그라운드에 있을 때 자동 저장 등을 일시 정지하여 배터리 절약
      * 
+     * ⚠️ 중요: 저장이 진행 중일 때는 백그라운드 전환과 관계없이 저장이 완료되어야 함
+     * - 사용자 작업(사진 촬영, 텍스트 입력) 내용이 손실되지 않도록 보장
+     * 
      * 동작:
-     * - 백그라운드 진입: 자동 저장 일시 정지
+     * - 백그라운드 진입: 자동 저장 일시 정지 (단, 저장 진행 중이 아닐 때만)
      * - 포그라운드 복귀: 자동 저장 재개
+     * - 저장 진행 중: 백그라운드 전환과 관계없이 저장 계속 진행
      */
     setupVisibilityListener() {
         document.addEventListener('visibilitychange', () => {
             if (document.hidden) {
-                // 백그라운드 진입: 자동 저장 일시 정지, 불필요한 작업 중지
-                this.pauseAutoSave = true;
-                console.log('⏸️ 백그라운드 모드 진입 - 자동 저장 일시 정지');
+                // 백그라운드 진입
+                // ⚠️ 중요: 저장이 진행 중이 아닐 때만 일시 정지
+                // 저장이 진행 중이면 백그라운드에서도 계속 진행되어야 함
+                if (!this.isAutoSaving) {
+                    this.pauseAutoSave = true;
+                    console.log('⏸️ 백그라운드 모드 진입 - 자동 저장 일시 정지');
+                } else {
+                    // 저장 진행 중이면 일시 정지하지 않음
+                    console.log('⏸️ 백그라운드 모드 진입 (저장 진행 중 - 저장 계속 진행)');
+                }
             } else {
                 // 포그라운드 복귀: 자동 저장 재개
                 this.pauseAutoSave = false;
                 console.log('▶️ 포그라운드 복귀 - 자동 저장 재개');
+                
+                // 포그라운드 복귀 시 저장되지 않은 데이터가 있으면 자동 저장
+                const hasUnsavedData = this.photos.some(p => !p.uploaded) || this.metadataDirty;
+                if (hasUnsavedData && !this.isAutoSaving) {
+                    console.log('💾 저장되지 않은 데이터 감지 - 자동 저장 시작');
+                    this.autoSave(true).catch(error => {
+                        console.error('❌ 포그라운드 복귀 시 자동 저장 오류:', error);
+                    });
+                }
             }
         });
     }
@@ -2282,31 +2302,6 @@ class DxfPhotoEditor {
             });
         }
         
-        // ⭐ 선 두께 정보 확인 (처음 10개 엔티티)
-        if (this.dxfData.entities && this.dxfData.entities.length > 0) {
-            console.log('\n📏 엔티티 선 두께 정보 (처음 10개):');
-            const lineEntities = this.dxfData.entities.filter(e => 
-                e.type === 'LINE' || e.type === 'POLYLINE' || e.type === 'LWPOLYLINE'
-            ).slice(0, 10);
-            
-            if (lineEntities.length > 0) {
-                lineEntities.forEach((entity, i) => {
-                    const lineweight = entity.lineweight;
-                    const constantWidth = entity.constantWidth;
-                    const hasLineweight = 'lineweight' in entity;
-                    const hasConstantWidth = 'constantWidth' in entity;
-                    
-                    console.log(`  ${i}. ${entity.type} [${entity.layer || 'N/A'}]`);
-                    console.log(`     lineweight: ${lineweight} (존재: ${hasLineweight}, 타입: ${typeof lineweight})`);
-                    console.log(`     constantWidth: ${constantWidth} (존재: ${hasConstantWidth}, 타입: ${typeof constantWidth})`);
-                    console.log(`     전체 속성:`, Object.keys(entity).filter(k => 
-                        k.includes('weight') || k.includes('Width') || k.includes('width')
-                    ));
-                });
-            } else {
-                console.log('  → LINE/POLYLINE 엔티티가 없습니다.');
-            }
-        }
             
         // 레이어 정보 표시 (상세)
         if (this.dxfData.tables) {
@@ -2393,7 +2388,6 @@ class DxfPhotoEditor {
         
         // 디버그 카운터 리셋
         this.colorDebugCount = 0;
-        this._polylineDebugCount = 0;
         this._blockDebugCount = 0;
         this._textDebugCount = 0;
         
@@ -2435,9 +2429,6 @@ class DxfPhotoEditor {
                         type: entityType,
                         firstVertex: firstVertexX !== null && firstVertexY !== null ? { x: firstVertexX, y: firstVertexY } : null
                     });
-                    if (currentLayer.includes('턱낮춤') || currentLayer.includes('화단')) {
-                        console.log(`📝 constantWidthMap에 추가: layer="${currentLayer}", constantWidth=${constantWidth}, type=${entityType}`);
-                    }
                 }
                 // 새 엔티티 시작
                 inEntity = true;
@@ -2463,9 +2454,6 @@ class DxfPhotoEditor {
                                 if (!isNaN(val)) {
                                     // 0 이상의 모든 값 저장 (0.04, 0.05 등 포함, 0도 포함하여 구분)
                                     constantWidth = val;
-                                    if (currentLayer && (currentLayer.includes('턱낮춤') || currentLayer.includes('화단'))) {
-                                        console.log(`🔍 constantWidth 발견 (AcDbPolyline 이후): layer="${currentLayer}", line=${j+1}, value=${val}`);
-                                    }
                                     break; // 찾았으므로 중단
                                 }
                             } catch (e) {
@@ -2483,9 +2471,6 @@ class DxfPhotoEditor {
                         if (!isNaN(val)) {
                             // 0 이상의 모든 값 저장 (0.04, 0.05 등 포함, 0도 포함하여 구분)
                             constantWidth = val;
-                            if (currentLayer && (currentLayer.includes('턱낮춤') || currentLayer.includes('화단'))) {
-                                console.log(`🔍 constantWidth 발견 (일반): layer="${currentLayer}", line=${i+1}, value=${val}`);
-                            }
                         }
                     } catch (e) {
                         // 무시
@@ -2513,9 +2498,6 @@ class DxfPhotoEditor {
                             type: entityType,
                             firstVertex: firstVertexX !== null && firstVertexY !== null ? { x: firstVertexX, y: firstVertexY } : null
                         });
-                        if (currentLayer.includes('턱낮춤') || currentLayer.includes('화단')) {
-                            console.log(`📝 constantWidthMap에 추가: layer="${currentLayer}", constantWidth=${constantWidth}, type=${entityType}`);
-                        }
                     }
                     inEntity = false;
                     currentLayer = '';
@@ -2534,37 +2516,9 @@ class DxfPhotoEditor {
                 type: entityType,
                 firstVertex: firstVertexX !== null && firstVertexY !== null ? { x: firstVertexX, y: firstVertexY } : null
             });
-            if (currentLayer.includes('턱낮춤') || currentLayer.includes('화단')) {
-                console.log(`📝 constantWidthMap에 추가 (마지막): layer="${currentLayer}", constantWidth=${constantWidth}, type=${entityType}`);
-            }
         }
         
         // 2단계: 파싱된 엔티티와 매칭
-        console.log(`📊 constantWidthMap 총 ${constantWidthMap.length}개 항목`);
-        
-        // 턱낮춤 레이어의 맵 항목 확인
-        const teuknabchumItems = constantWidthMap.filter(item => item.layer && item.layer.includes('턱낮춤'));
-        console.log(`📊 턱낮춤 레이어 맵 항목: ${teuknabchumItems.length}개`);
-        if (teuknabchumItems.length > 0) {
-            console.log('턱낮춤 맵 항목:', teuknabchumItems.map(item => ({
-                layer: item.layer,
-                constantWidth: item.constantWidth,
-                type: item.type,
-                firstVertex: item.firstVertex
-            })));
-        }
-        
-        // 화단 레이어의 맵 항목 확인
-        const hwadanItems = constantWidthMap.filter(item => item.layer && item.layer.includes('화단'));
-        console.log(`📊 화단 레이어 맵 항목: ${hwadanItems.length}개`);
-        if (hwadanItems.length > 0) {
-            console.log('화단 맵 항목 샘플 (처음 3개):', hwadanItems.slice(0, 3).map(item => ({
-                layer: item.layer,
-                constantWidth: item.constantWidth,
-                type: item.type,
-                firstVertex: item.firstVertex
-            })));
-        }
         
         let mapIndex = 0;
         let entityIndex = 0;
@@ -2577,9 +2531,6 @@ class DxfPhotoEditor {
             
             // 이미 constantWidth가 있으면 스킵
             if (entity.constantWidth !== undefined && entity.constantWidth !== null) {
-                if (entity.layer && (entity.layer.includes('턱낮춤') || entity.layer.includes('화단'))) {
-                    console.log(`⏭️ 이미 constantWidth 있음: layer="${entity.layer}", constantWidth=${entity.constantWidth}`);
-                }
                 return;
             }
             
@@ -2633,34 +2584,8 @@ class DxfPhotoEditor {
                 foundCount++;
                 matched = true;
                 mapIndex = bestMatchIndex + 1;
-                if (entity.layer && (entity.layer.includes('턱낮춤') || entity.layer.includes('화단'))) {
-                    const matchType = bestMatchScore === 100 ? '정점 기반' : '순서 기반';
-                    console.log(`✅ constantWidth 매칭 (${matchType}): layer="${entity.layer}", constantWidth=${bestMatch.constantWidth}, entityIndex=${entityIndex}, mapIndex=${bestMatchIndex}`);
-                    if (entity.layer.includes('턱낮춤')) {
-                        console.log(`   엔티티 첫 정점: (${entity.vertices && entity.vertices.length > 0 ? `${entity.vertices[0].x}, ${entity.vertices[0].y}` : '없음'})`);
-                        console.log(`   맵 첫 정점: (${bestMatch.firstVertex ? `${bestMatch.firstVertex.x}, ${bestMatch.firstVertex.y}` : '없음'})`);
-                    }
-                }
-            }
-            
-            if (!matched && entity.layer && (entity.layer.includes('턱낮춤') || entity.layer.includes('화단'))) {
-                console.log(`❌ 매칭 실패: layer="${entity.layer}", type=${entity.type}, entityIndex=${entityIndex}, mapIndex=${mapIndex}`);
-                console.log(`   엔티티 첫 정점: (${entity.vertices && entity.vertices.length > 0 ? `${entity.vertices[0].x}, ${entity.vertices[0].y}` : '없음'})`);
-                // 같은 레이어의 맵 항목 찾기
-                const sameLayerItems = constantWidthMap.filter(item => item.type === entity.type && item.layer === entity.layer);
-                console.log(`   같은 레이어 맵 항목 개수: ${sameLayerItems.length}`);
-                if (sameLayerItems.length > 0) {
-                    console.log(`   같은 레이어 맵 항목 샘플:`, sameLayerItems.slice(0, 3).map(item => ({
-                        constantWidth: item.constantWidth,
-                        firstVertex: item.firstVertex
-                    })));
-                }
             }
         });
-        
-        if (foundCount > 0) {
-            console.log(`📏 constantWidth 추출 완료: ${foundCount}개 엔티티`);
-        }
     }
     
     fitDxfToView() {
@@ -2991,16 +2916,6 @@ class DxfPhotoEditor {
         const actualWidth = Math.max(lineweight >= 0 ? lineweight : 0, constantWidth);
         const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
         
-        // 디버그: 첫 30개 로그 (더 많이 출력)
-        if (!this._lineDebugCount) this._lineDebugCount = 0;
-        if (this._lineDebugCount < 30) {
-            console.log(`📏 LINE [${this._lineDebugCount}] layer="${entity.layer}"`);
-            console.log(`   lineweight=${entity.lineweight} (타입: ${typeof entity.lineweight}, 존재: ${'lineweight' in entity})`);
-            console.log(`   constantWidth=${entity.constantWidth} (타입: ${typeof entity.constantWidth}, 존재: ${'constantWidth' in entity})`);
-            console.log(`   계산: lineweight=${lineweight}, constantWidth=${constantWidth}, actualWidth=${actualWidth} → strokeWidth=${strokeWidth}px`);
-            this._lineDebugCount++;
-        }
-        
         // 디버그용 데이터 속성 추가
         line.setAttribute('data-lineweight', entity.lineweight);
         line.setAttribute('data-constantwidth', entity.constantWidth || 0);
@@ -3057,22 +2972,6 @@ class DxfPhotoEditor {
         const actualWidth = Math.max(lineweight >= 0 ? lineweight : 0, constantWidth);
         const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
         
-        // 디버그: 첫 30개 로그 + .F턱낮춤 레이어는 모두 로그
-        if (!this._polylineWeightDebugCount) this._polylineWeightDebugCount = 0;
-        const isTargetLayer = entity.layer && entity.layer.includes('턱낮춤');
-        if (this._polylineWeightDebugCount < 30 || isTargetLayer) {
-            console.log(`📏 POLYLINE [${this._polylineWeightDebugCount}] layer="${entity.layer}"`);
-            console.log(`   lineweight=${entity.lineweight} (타입: ${typeof entity.lineweight}, 존재: ${'lineweight' in entity})`);
-            console.log(`   constantWidth=${entity.constantWidth} (타입: ${typeof entity.constantWidth}, 존재: ${'constantWidth' in entity})`);
-            console.log(`   계산: lineweight=${lineweight}, constantWidth=${constantWidth}, actualWidth=${actualWidth} → strokeWidth=${strokeWidth}px`);
-            if (isTargetLayer) {
-                console.log(`   ⚠️ .F턱낮춤 레이어 감지! 실제 DOM stroke-width: ${strokeWidth}px`);
-            }
-            if (!isTargetLayer) {
-                this._polylineWeightDebugCount++;
-            }
-        }
-        
         // 디버그용 데이터 속성 추가
         element.setAttribute('data-lineweight', entity.lineweight);
         element.setAttribute('data-constantwidth', entity.constantWidth || 0);
@@ -3084,16 +2983,6 @@ class DxfPhotoEditor {
         
         element.setAttribute('stroke-linejoin', 'round');
         element.setAttribute('stroke-linecap', 'round');
-        
-        // 디버그: closed 속성 확인 (처음 5개만)
-        if (!this._polylineDebugCount) this._polylineDebugCount = 0;
-        if (this._polylineDebugCount < 5 && isClosed) {
-            console.log(`📐 닫힌 폴리선: closed=${entity.closed}, shape=${entity.shape}, 정점=${validVertices.length}개 → ${finalVertices.length}개 (${validVertices.length !== finalVertices.length ? '중복 제거' : '그대로'})`);
-            const first = finalVertices[0];
-            const last = finalVertices[finalVertices.length - 1];
-            console.log(`   첫 점: (${first.x.toFixed(2)}, ${first.y.toFixed(2)}), 마지막 점: (${last.x.toFixed(2)}, ${last.y.toFixed(2)})`);
-            this._polylineDebugCount++;
-        }
         
         return element;
     }
@@ -4805,24 +4694,37 @@ class DxfPhotoEditor {
      * Google Drive 자동 저장
      * 성능 최적화: Debounce 적용으로 네트워크 트래픽 감소 (약 80%)
      * 
+     * ⚠️ 중요: 사용자 작업 내용 보호
+     * - force=true일 때는 백그라운드 전환, 앱 종료, 화면 잠금과 관계없이 저장 진행
+     * - 저장이 시작되면 중단 없이 완료되어야 함 (데이터 손실 방지)
+     * 
      * @param {boolean} force - true면 debounce 없이 즉시 저장 (기본값: false)
      *                         - 사진 추가/삭제 시 자동으로 force=true 호출
+     *                         - force=true일 때는 백그라운드 모드와 관계없이 저장 실행
      * 
      * 동작:
      * - 일반 호출: 마지막 변경 후 3초 대기 (Debounce)
      * - force=true: 즉시 저장 (사진 추가/삭제 등 중요한 작업)
-     * - 백그라운드 모드: 자동 저장 일시 정지 (배터리 절약)
-     * - 중복 실행 방지: 이미 저장 중이면 스킵
+     *   → 백그라운드 전환, 앱 종료, 화면 잠금과 관계없이 저장 진행
+     * - force=false: 백그라운드 모드에서 일시 정지 (배터리 절약)
+     * - 중복 실행 방지: 이미 저장 중이면 스킵 (완료 후 재실행 예약)
      * 
      * @example
-     * await this.autoSave(); // Debounce 적용
-     * await this.autoSave(true); // 즉시 저장
+     * await this.autoSave(); // Debounce 적용 (백그라운드에서 일시 정지)
+     * await this.autoSave(true); // 즉시 저장 (백그라운드에서도 계속 진행)
      */
     async autoSave(force = false) {
-        // 백그라운드 모드에서는 자동 저장 일시 정지 (force일 때는 제외)
+        // ⚠️ 중요: force=true일 때는 백그라운드 모드와 관계없이 저장 실행
+        // 사용자 작업(사진 촬영, 텍스트 입력) 내용이 손실되지 않도록 보장
+        // force=false일 때만 백그라운드 모드에서 일시 정지
         if (this.pauseAutoSave && !force) {
-            console.log('⏸️ 백그라운드 모드 - 자동 저장 일시 정지');
+            console.log('⏸️ 백그라운드 모드 - 자동 저장 일시 정지 (force=false)');
             return;
+        }
+        
+        // force=true일 때는 백그라운드 모드와 관계없이 저장 진행
+        if (force && this.pauseAutoSave) {
+            console.log('💾 강제 저장 실행 (force=true) - 백그라운드 모드와 관계없이 저장 진행');
         }
         
         // 이미 저장 중이면 처리 방법:
