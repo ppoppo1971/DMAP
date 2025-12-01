@@ -524,17 +524,24 @@ class DxfPhotoEditor {
         this.debugLog(`   타겟: (${targetX.toFixed(1)}, ${targetY.toFixed(1)})`);
         this.debugLog(`   현재 ViewBox: x=${this.viewBox.x.toFixed(1)}, y=${this.viewBox.y.toFixed(1)}, w=${this.viewBox.width.toFixed(1)}, h=${this.viewBox.height.toFixed(1)}`);
         
-        // 새로운 ViewBox 크기
-        const newWidth = this.viewBox.width / zoomFactor;
-        const newHeight = this.viewBox.height / zoomFactor;
-        
-        this.debugLog(`   새 크기: w=${newWidth.toFixed(1)}, h=${newHeight.toFixed(1)} (${zoomFactor}배)`);
-        
         // 최소/최대 크기 제한
         const minSize = (this.originalViewBox?.width || 1000) * 0.01;
         const maxSize = (this.originalViewBox?.width || 1000) * 10;
         
-        if (newWidth < minSize || newWidth > maxSize) {
+        // minSize까지 필요한 배율 계산 (최대 확대까지 도달 가능하도록)
+        const requiredFactor = this.viewBox.width / minSize;
+        
+        // 요청된 배율과 필요한 배율 중 작은 값 사용
+        // 이렇게 하면 마지막 단계에서 필요한 만큼만 확대하여 minSize에 정확히 도달
+        const actualFactor = Math.min(zoomFactor, requiredFactor);
+        
+        // 새로운 ViewBox 크기
+        const newWidth = this.viewBox.width / actualFactor;
+        const newHeight = this.viewBox.height / actualFactor;
+        
+        this.debugLog(`   새 크기: w=${newWidth.toFixed(1)}, h=${newHeight.toFixed(1)} (${actualFactor.toFixed(2)}배, 요청: ${zoomFactor}배)`);
+        
+        if (newWidth <= minSize || newWidth > maxSize) {
             console.log('⚠️ 줌 제한 초과');
             return;
         }
@@ -4025,7 +4032,7 @@ class DxfPhotoEditor {
                 const minSize = (this.originalViewBox?.width || 1000) * 0.01;
                 const maxSize = (this.originalViewBox?.width || 1000) * 10;
                 
-                if (newWidth >= minSize && newWidth <= maxSize) {
+                if (newWidth > minSize && newWidth <= maxSize) {
                     // 중심점 기준으로 ViewBox 재계산
                     const centerRatioX = (centerX - this.viewBox.x) / this.viewBox.width;
                     const centerRatioY = (centerY - this.viewBox.y) / this.viewBox.height;
@@ -4249,18 +4256,25 @@ class DxfPhotoEditor {
      * 특정 점을 중심으로 줌 (부드러운 확대/축소)
      */
     zoomAt(centerX, centerY, factor) {
-        // 새로운 크기 계산
-        // factor > 1: 확대 (viewBox 크기 감소) → viewBox.width / factor
-        // factor < 1: 축소 (viewBox 크기 증가) → viewBox.width / factor
-        const newWidth = this.viewBox.width / factor;
-        const newHeight = this.viewBox.height / factor;
-        
         // 최소/최대 크기 제한
         const minSize = (this.originalViewBox?.width || 1000) * 0.01; // 최대 100배 확대
         const maxSize = (this.originalViewBox?.width || 1000) * 10;   // 최대 10배 축소
         
-        if (newWidth < minSize || newWidth > maxSize) {
-            return; // 제한을 벗어나면 줌 취소
+        // minSize까지 필요한 배율 계산 (최대 확대까지 도달 가능하도록)
+        const requiredFactor = this.viewBox.width / minSize;
+        
+        // 요청된 배율과 필요한 배율 중 작은 값 사용
+        // 이렇게 하면 마지막 단계에서 필요한 만큼만 확대하여 minSize에 정확히 도달
+        const actualFactor = Math.min(factor, requiredFactor);
+        
+        // 새로운 크기 계산
+        // actualFactor > 1: 확대 (viewBox 크기 감소) → viewBox.width / actualFactor
+        // actualFactor < 1: 축소 (viewBox 크기 증가) → viewBox.width / actualFactor
+        const newWidth = this.viewBox.width / actualFactor;
+        const newHeight = this.viewBox.height / actualFactor;
+        
+        if (newWidth <= minSize || newWidth > maxSize) {
+            return; // 제한을 벗어나면 줌 취소 (minSize와 같을 때도 막기)
         }
         
         // 중심점의 상대 위치 계산 (0~1 사이 값)
