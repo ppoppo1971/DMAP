@@ -3666,26 +3666,21 @@ class DxfPhotoEditor {
             this.redraw();
             this.debugLog('   ✓ 화면 다시 그리기 완료');
             
-            // Google Drive 자동 저장 (비동기로 실행 - 저장 완료를 기다리지 않음)
-            // 사용자가 저장 완료를 기다리지 않고 연속으로 사진을 촬영할 수 있도록
-            this.debugLog('7️⃣ 자동 저장 시작 (비동기)...');
-            this.showToast('☁️ 저장 중 (구글드라이브)');
+            // ⚠️ 중요: 순서 변경 - 원본 파일 저장을 먼저 실행 (사용자 제스처 컨텍스트 내)
+            // 그 다음 Google Drive 업로드 (비동기)
+            // 이렇게 하면 사용자 제스처 컨텍스트가 유지되어 파일 저장이 확실히 작동함
             
-            // 비동기로 저장 실행 (await 제거)
-            this.autoSave(true).catch(error => {
-                console.error('❌ 자동 저장 오류 (비동기):', error);
-                // 오류 발생 시에도 사용자 작업은 계속 가능하도록
-            });
-            
-            // iOS Chrome에서 원본 파일을 파일 앱에 자동 저장
-            // 사용자 제스처 컨텍스트 내에서 실행되어야 함 (이미 "사진 사용" 버튼 클릭 시점)
+            // iOS Chrome에서 원본 파일을 파일 앱에 자동 저장 (먼저 실행)
             const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
             const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
             
             if (isIOS && !isSafari) {
                 // iOS Chrome: 원본 파일을 파일 앱에 자동 저장
+                // ⚠️ 중요: file 객체는 이미 readFileAsDataURL에서 읽혔으므로,
+                // 원본 파일 데이터를 보관하거나 처음 읽을 때 저장해야 함
+                // 여기서는 원본 imageData를 사용하여 Blob 생성
                 try {
-                    this.debugLog('8️⃣ iOS Chrome: 원본 파일을 파일 앱에 저장 시작...');
+                    this.debugLog('7️⃣ iOS Chrome: 원본 파일을 파일 앱에 저장 시작...');
                     
                     // 파일명 생성 (Google Drive와 동일한 형식 또는 원본 파일명)
                     const baseName = this.dxfFileName ? this.dxfFileName.replace(/\.dxf$/i, '') : 'photo';
@@ -3693,12 +3688,19 @@ class DxfPhotoEditor {
                     const formatted = `${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
                     const fileName = `${baseName}_photo_${formatted}.jpg`;
                     
-                    // 원본 파일을 Blob으로 변환하여 다운로드
-                    // file 객체를 그대로 사용 (원본 파일)
-                    const blob = new Blob([await file.arrayBuffer()], { type: file.type || 'image/jpeg' });
+                    // 원본 imageData (Base64)를 Blob으로 변환
+                    // imageData는 이미 readFileAsDataURL에서 읽은 원본 데이터
+                    const base64Data = imageData; // 원본 imageData 사용
+                    const byteCharacters = atob(base64Data.split(',')[1]); // Base64 디코딩
+                    const byteNumbers = new Array(byteCharacters.length);
+                    for (let i = 0; i < byteCharacters.length; i++) {
+                        byteNumbers[i] = byteCharacters.charCodeAt(i);
+                    }
+                    const byteArray = new Uint8Array(byteNumbers);
+                    const blob = new Blob([byteArray], { type: file.type || 'image/jpeg' });
                     
                     this.downloadBlob(blob, fileName);
-                    this.debugLog('   ✓ 원본 파일 다운로드 시작:', fileName);
+                    this.debugLog('   ✓ 원본 파일 다운로드 시작:', fileName, '크기:', blob.size, 'bytes');
                     
                     // 사용자 안내 (약간의 지연 후 표시)
                     setTimeout(() => {
@@ -3706,9 +3708,21 @@ class DxfPhotoEditor {
                     }, 500);
                 } catch (error) {
                     console.error('❌ 원본 파일 저장 오류:', error);
+                    console.error('   오류 상세:', error.message, error.stack);
                     // 원본 파일 저장 실패해도 Google Drive 업로드는 계속 진행
                 }
             }
+            
+            // Google Drive 자동 저장 (비동기로 실행 - 저장 완료를 기다리지 않음)
+            // 사용자가 저장 완료를 기다리지 않고 연속으로 사진을 촬영할 수 있도록
+            this.debugLog('8️⃣ Google Drive 자동 저장 시작 (비동기)...');
+            this.showToast('☁️ 저장 중 (구글드라이브)');
+            
+            // 비동기로 저장 실행 (await 제거)
+            this.autoSave(true).catch(error => {
+                console.error('❌ 자동 저장 오류 (비동기):', error);
+                // 오류 발생 시에도 사용자 작업은 계속 가능하도록
+            });
             
             // 동일 좌표에 추가된 경우 모달 다시 열기
             if (locationInfo && this.currentPhotoGroup.length > 0) {
