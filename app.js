@@ -3560,6 +3560,11 @@ class DxfPhotoEditor {
      * @param {Object} position - {x, y} ViewBox 좌표
      */
     async addPhotoAt(file, position, locationInfo = null) {
+        // ⚠️ 진단: 함수가 호출되었는지 확인
+        console.log('🔍 [진단] addPhotoAt 함수 호출됨 - 버전 1.2.0');
+        console.log('🔍 [진단] 파일:', file?.name, '크기:', file?.size);
+        console.log('🔍 [진단] 위치:', position);
+        
         this.debugLog('====================================');
         this.debugLog('📷 addPhotoAt 호출됨');
         this.debugLog('   파일:', file);
@@ -3589,15 +3594,32 @@ class DxfPhotoEditor {
         
         this.debugLog('▶ 사진 추가 프로세스 시작:', file.name);
         this.debugLog('   위치:', { x: position.x, y: position.y });
+        
+        // ⚠️ 중요: 원본 imageData를 별도로 보관 (파일 저장용)
+        let originalImageData = null;
+        
         try {
             // 이미지 로드
             this.debugLog('1️⃣ 이미지 데이터 읽기 시작...');
             const imageData = await this.readFileAsDataURL(file);
             this.debugLog('   ✓ 이미지 데이터 읽기 완료 (길이:', imageData?.length, ')');
             
-            this.debugLog('2️⃣ 이미지 객체 생성 시작...');
-            const image = await this.loadImage(imageData);
-            this.debugLog('   ✓ 이미지 로드 완료 (크기:', image.width, 'x', image.height, ')');
+            // 원본 imageData 보관 (파일 저장용)
+            originalImageData = imageData;
+            console.log('🔍 [진단] 원본 imageData 보관 완료, 길이:', originalImageData.length);
+            
+            // 이미지 객체 생성 (오류가 발생해도 파일 저장은 계속 진행)
+            let image = null;
+            try {
+                this.debugLog('2️⃣ 이미지 객체 생성 시작...');
+                image = await this.loadImage(imageData);
+                this.debugLog('   ✓ 이미지 로드 완료 (크기:', image.width, 'x', image.height, ')');
+            } catch (imageError) {
+                console.error('⚠️ 이미지 로드 오류 (계속 진행):', imageError);
+                console.error('   오류 상세:', imageError.message);
+                // 이미지 로드 실패해도 파일 저장은 계속 진행
+                // image는 null로 유지
+            }
             
             // 이미지 압축 (설정된 용량에 따라)
             this.debugLog('3️⃣ 이미지 압축 시작...');
@@ -3615,10 +3637,16 @@ class DxfPhotoEditor {
             let compressedImageData;
             if (targetSize === null) {
                 // 원본: 압축 없이 Base64만 변환
-                compressedImageData = imageData;
+                compressedImageData = originalImageData || imageData;
                 this.debugLog('   ✓ 원본 사용 (압축 없음, 크기:', (compressedImageData.length / 1024).toFixed(2), 'KB)');
             } else {
-                compressedImageData = await this.compressImage(image, file.name, targetSize);
+                // 이미지 객체가 없으면 원본 사용
+                if (!image) {
+                    console.warn('⚠️ 이미지 객체가 없어 원본 사용');
+                    compressedImageData = originalImageData || imageData;
+                } else {
+                    compressedImageData = await this.compressImage(image, file.name, targetSize);
+                }
                 
                 // 압축된 데이터 유효성 검증
                 if (!compressedImageData || compressedImageData.length === 0) {
@@ -3646,7 +3674,7 @@ class DxfPhotoEditor {
                 width: 1,       // 더미값 (화면 표시는 픽셀 기준 25px 고정)
                 height: 1,      // 더미값 (화면 표시는 픽셀 기준 25px 고정)
                 imageData: compressedImageData, // 압축된 이미지 사용
-                image: image,
+                image: image,   // null일 수 있음 (이미지 로드 실패 시)
                 memo: '',
                 fileName: null,
                 uploaded: false // 업로드 상태 추적
@@ -3673,17 +3701,21 @@ class DxfPhotoEditor {
             // ⚠️ 중요: 순서 변경 - 원본 파일 저장을 먼저 실행 (사용자 제스처 컨텍스트 내)
             // 그 다음 Google Drive 업로드 (비동기)
             // 이렇게 하면 사용자 제스처 컨텍스트가 유지되어 파일 저장이 확실히 작동함
-            // 버전: v2.0 - 순서 변경 및 안전한 Base64 디코딩
+            // 버전: v1.2.0 - 순서 변경 및 안전한 Base64 디코딩
             
-            // iOS Chrome에서 원본 파일을 파일 앱에 자동 저장 (먼저 실행)
+            // iOS Chrome에서 원본 파일을 파일 앱에 자동 저장 (먼저 실행 - 동기적으로)
             const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
             const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
             
-            if (isIOS && !isSafari) {
+            // ⚠️ 진단: iOS Chrome 감지 확인
+            console.log('🔍 [진단] iOS 감지:', isIOS, 'Safari:', isSafari);
+            console.log('🔍 [진단] User Agent:', navigator.userAgent);
+            console.log('🔍 [진단] originalImageData 존재:', !!originalImageData, '타입:', typeof originalImageData);
+            
+            // ⚠️ 중요: 원본 파일 저장을 먼저 실행 (await로 동기 실행)
+            if (isIOS && !isSafari && originalImageData) {
+                console.log('🔍 [진단] iOS Chrome 조건 충족 - 파일 저장 시도');
                 // iOS Chrome: 원본 파일을 파일 앱에 자동 저장
-                // ⚠️ 중요: file 객체는 이미 readFileAsDataURL에서 읽혔으므로,
-                // 원본 파일 데이터를 보관하거나 처음 읽을 때 저장해야 함
-                // 여기서는 원본 imageData를 사용하여 Blob 생성
                 try {
                     console.log('========================================');
                     console.log('🔄 [v1.2.0] 7️⃣ iOS Chrome: 원본 파일을 파일 앱에 저장 시작...');
@@ -3697,17 +3729,16 @@ class DxfPhotoEditor {
                     const fileName = `${baseName}_photo_${formatted}.jpg`;
                     
                     // 원본 imageData (Base64)를 Blob으로 변환
-                    // imageData는 이미 readFileAsDataURL에서 읽은 원본 데이터
-                    if (!imageData || typeof imageData !== 'string') {
-                        throw new Error('imageData가 유효하지 않습니다');
+                    // originalImageData는 readFileAsDataURL에서 읽은 원본 데이터
+                    if (!originalImageData || typeof originalImageData !== 'string') {
+                        throw new Error('originalImageData가 유효하지 않습니다');
                     }
                     
-                    if (!imageData.startsWith('data:image/')) {
-                        throw new Error('imageData가 올바른 Base64 형식이 아닙니다');
+                    if (!originalImageData.startsWith('data:image/')) {
+                        throw new Error('originalImageData가 올바른 Base64 형식이 아닙니다');
                     }
                     
-                    const base64Data = imageData; // 원본 imageData 사용
-                    const base64String = base64Data.split(',')[1];
+                    const base64String = originalImageData.split(',')[1];
                     
                     if (!base64String) {
                         throw new Error('Base64 데이터를 추출할 수 없습니다');
@@ -3723,21 +3754,26 @@ class DxfPhotoEditor {
                     const blob = new Blob([byteArray], { type: file.type || 'image/jpeg' });
                     
                     console.log('   ✅ Blob 생성 완료, 크기:', blob.size, 'bytes');
+                    
+                    // ⚠️ 중요: 동기적으로 실행 (await 사용)
+                    // 사용자 제스처 컨텍스트가 유지되도록 즉시 실행
                     this.downloadBlob(blob, fileName);
+                    console.log('   ✅ downloadBlob 호출 완료');
                     this.debugLog('   ✓ 원본 파일 다운로드 시작:', fileName, '크기:', blob.size, 'bytes');
                     
-                    // 사용자 안내 (약간의 지연 후 표시)
-                    setTimeout(() => {
-                        this.showToast('💾 원본 파일이 다운로드 폴더에 저장되었습니다');
-                    }, 500);
+                    // 사용자 안내
+                    this.showToast('💾 원본 파일 저장 중...');
                 } catch (error) {
                     console.error('❌ 원본 파일 저장 오류:', error);
                     console.error('   오류 상세:', error.message);
                     console.error('   스택:', error.stack);
-                    console.error('   imageData 타입:', typeof imageData);
-                    console.error('   imageData 길이:', imageData ? imageData.length : 'null');
+                    console.error('   originalImageData 타입:', typeof originalImageData);
+                    console.error('   originalImageData 길이:', originalImageData ? originalImageData.length : 'null');
                     // 원본 파일 저장 실패해도 Google Drive 업로드는 계속 진행
                 }
+            } else {
+                console.log('🔍 [진단] 파일 저장 스킵 - 조건 불충족');
+                console.log('   isIOS:', isIOS, 'isSafari:', isSafari, 'originalImageData:', !!originalImageData);
             }
             
             // Google Drive 자동 저장 (비동기로 실행 - 저장 완료를 기다리지 않음)
