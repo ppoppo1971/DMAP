@@ -6279,17 +6279,6 @@ async function waitForDriveReady(timeoutMs = 5000) {
 async function startApp() {
     console.log('📱 앱 시작...');
     
-    // DOM이 완전히 로드되었는지 확인
-    if (document.readyState === 'loading') {
-        await new Promise(resolve => {
-            if (document.readyState === 'complete') {
-                resolve();
-            } else {
-                document.addEventListener('DOMContentLoaded', resolve);
-            }
-        });
-    }
-    
     // Google Drive Manager가 준비될 때까지 대기 (최대 5초)
     let retries = 0;
     while (!window.driveManager && retries < 50) {
@@ -6301,8 +6290,11 @@ async function startApp() {
         console.log('✅ Google Drive Manager 준비됨');
     } else {
         console.warn('⚠️ Google Drive Manager 초기화 대기 시간 초과');
+        console.warn('   window.driveManager:', window.driveManager);
+        console.warn('   window.initGoogleDrive:', typeof window.initGoogleDrive);
     }
 
+    // Google Drive 초기화 대기
     await waitForDriveReady();
     
     // 앱 인스턴스 생성
@@ -6329,14 +6321,11 @@ async function startApp() {
 }
 
 // DOMContentLoaded 또는 이미 로드된 경우 실행
-// 동적으로 로드된 스크립트이므로 약간의 지연 후 실행
+// defer 속성으로 로드되므로 DOMContentLoaded 이후에 실행됨
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-        // DOM이 로드된 후 약간의 지연을 두어 다른 스크립트들이 완전히 로드되도록 함
-        setTimeout(startApp, 100);
-    });
+    document.addEventListener('DOMContentLoaded', startApp);
 } else {
-    // 이미 로드된 경우 약간의 지연 후 실행
-    setTimeout(startApp, 100);
+    // 이미 로드된 경우 즉시 실행
+    startApp();
 }
 
