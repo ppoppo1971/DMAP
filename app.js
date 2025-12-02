@@ -3600,14 +3600,6 @@ class DxfPhotoEditor {
             // 변환 완료 토스트 (대기 시간 제거 - 속도 최적화)
             this.showToast('✅ 변환 완료');
             
-            // ⚠️ 원본 사진을 로컬에 저장 (압축 전)
-            try {
-                await this.saveOriginalPhotoToLocal(file, imageData);
-            } catch (error) {
-                // 원본 저장 실패해도 계속 진행 (선택적 기능)
-                console.warn('⚠️ 원본 사진 로컬 저장 실패:', error);
-            }
-            
             // 사진 객체 생성
             // x, y: ViewBox 좌표계에 고정 (롱프레스한 위치)
             // width, height: 화면 표시용이 아닌 메타데이터 용도 (항상 고정값)
@@ -6157,45 +6149,6 @@ class DxfPhotoEditor {
             x: rect.left + containerPoint.x,
             y: rect.top + containerPoint.y
         };
-    }
-    
-    /**
-     * 원본 사진을 로컬 폴더에 저장 (iOS Chrome 다운로드 폴더)
-     * @param {File} file - 원본 파일 객체
-     * @param {string} imageData - 원본 이미지 Data URL
-     */
-    async saveOriginalPhotoToLocal(file, imageData) {
-        try {
-            // Data URL을 Blob으로 변환
-            const response = await fetch(imageData);
-            const blob = await response.blob();
-            
-            // 파일명 생성 (타임스탬프 추가하여 중복 방지)
-            const timestamp = new Date().toISOString()
-                .replace(/[-:]/g, '')
-                .replace(/T/, '_')
-                .replace(/\..+/, '')
-                .slice(0, 15); // YYYYMMDD_HHmmss
-            
-            // 원본 파일명에서 확장자 추출
-            const originalName = file.name || 'photo';
-            const extension = originalName.split('.').pop() || 'jpg';
-            const baseName = originalName.replace(/\.[^/.]+$/, '') || 'photo';
-            
-            // 파일명: {원본명}_original_{타임스탬프}.{확장자}
-            const fileName = `${baseName}_original_${timestamp}.${extension}`;
-            
-            console.log('💾 원본 사진 로컬 저장 시작:', fileName);
-            console.log('   파일 크기:', (blob.size / 1024 / 1024).toFixed(2), 'MB');
-            
-            // downloadBlob 함수를 사용하여 다운로드
-            this.downloadBlob(blob, fileName);
-            
-            console.log('✅ 원본 사진 로컬 저장 완료:', fileName);
-        } catch (error) {
-            console.error('❌ 원본 사진 로컬 저장 오류:', error);
-            throw error;
-        }
     }
     
     /**
