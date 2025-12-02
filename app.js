@@ -1194,15 +1194,6 @@ class DxfPhotoEditor {
             console.warn('⚠️ delete-photo-btn 버튼을 찾을 수 없습니다 (사진 보기 모달)');
         }
         
-        // 재저장 버튼 이벤트
-        const reuploadPhotoBtn = document.getElementById('reupload-photo-btn');
-        if (reuploadPhotoBtn) {
-            reuploadPhotoBtn.addEventListener('click', () => {
-                this.reuploadPhoto();
-            });
-        } else {
-            console.warn('⚠️ reupload-photo-btn 버튼을 찾을 수 없습니다');
-        }
         
         // 사진 네비게이션 버튼 이벤트
         const photoPrevBtn = document.getElementById('photo-prev-btn');
@@ -4783,71 +4774,6 @@ class DxfPhotoEditor {
         }
 
         this.closePhotoViewModal();
-    }
-    
-    /**
-     * 사진 재업로드 (업로드 실패한 사진을 다시 업로드)
-     */
-    async reuploadPhoto() {
-        if (!this.selectedPhotoId) {
-            this.showToast('⚠️ 선택된 사진이 없습니다');
-            return;
-        }
-        
-        const photo = this.photos.find(p => p.id === this.selectedPhotoId);
-        if (!photo) {
-            this.showToast('⚠️ 사진을 찾을 수 없습니다');
-            return;
-        }
-        
-        // 이미 업로드된 경우
-        if (photo.uploaded === true) {
-            this.showToast('ℹ️ 이미 정상 저장된 사진입니다');
-            return;
-        }
-        
-        try {
-            this.showToast('📤 재업로드 중...');
-            console.log('📤 사진 재업로드 시작:', photo.id);
-            
-            // Google Drive에 업로드
-            if (window.currentDriveFile && window.saveToDrive) {
-                const baseName = this.getDxfBaseName();
-                const timestamp = new Date().toISOString()
-                    .replace(/[-:]/g, '')
-                    .replace(/T/, '_')
-                    .replace(/\..+/, '')
-                    .slice(4, 13); // MMDDHHmmss
-                const fileName = `${baseName}_photo_${timestamp}.jpg`;
-                
-                photo.fileName = fileName;
-                
-                // 사진만 업로드 (메타데이터는 autoSave에서 처리)
-                const appData = {
-                    photos: [photo], // 이 사진만
-                    allPhotos: this.photos, // 전체 사진 목록
-                    texts: this.texts
-                };
-                
-                await window.saveToDrive(appData, window.currentDriveFile.name);
-                
-                photo.uploaded = true;
-                this.metadataDirty = true;
-                
-                console.log('   ✅ Google Drive 업로드 완료');
-                
-                // 화면 다시 그리기 (마커 색상 변경)
-                this.redraw();
-                
-                this.showToast('✅ 재업로드 완료');
-                console.log('✅ 사진 재업로드 완료:', photo.id);
-            } else {
-                throw new Error('Google Drive 연결이 필요합니다');
-            }
-        } catch (error) {
-            console.error('❌ 사진 재업로드 실패:', error);
-            this.showToast('⚠️ 재업로드 실패: ' + error.message);
-        }
     }
     
     /**
