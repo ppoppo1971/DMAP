@@ -3669,6 +3669,7 @@ class DxfPhotoEditor {
             // ⚠️ 중요: 순서 변경 - 원본 파일 저장을 먼저 실행 (사용자 제스처 컨텍스트 내)
             // 그 다음 Google Drive 업로드 (비동기)
             // 이렇게 하면 사용자 제스처 컨텍스트가 유지되어 파일 저장이 확실히 작동함
+            // 버전: v2.0 - 순서 변경 및 안전한 Base64 디코딩
             
             // iOS Chrome에서 원본 파일을 파일 앱에 자동 저장 (먼저 실행)
             const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
@@ -3680,6 +3681,7 @@ class DxfPhotoEditor {
                 // 원본 파일 데이터를 보관하거나 처음 읽을 때 저장해야 함
                 // 여기서는 원본 imageData를 사용하여 Blob 생성
                 try {
+                    console.log('🔄 [v2.0] 7️⃣ iOS Chrome: 원본 파일을 파일 앱에 저장 시작...');
                     this.debugLog('7️⃣ iOS Chrome: 원본 파일을 파일 앱에 저장 시작...');
                     
                     // 파일명 생성 (Google Drive와 동일한 형식 또는 원본 파일명)
@@ -3690,8 +3692,23 @@ class DxfPhotoEditor {
                     
                     // 원본 imageData (Base64)를 Blob으로 변환
                     // imageData는 이미 readFileAsDataURL에서 읽은 원본 데이터
+                    if (!imageData || typeof imageData !== 'string') {
+                        throw new Error('imageData가 유효하지 않습니다');
+                    }
+                    
+                    if (!imageData.startsWith('data:image/')) {
+                        throw new Error('imageData가 올바른 Base64 형식이 아닙니다');
+                    }
+                    
                     const base64Data = imageData; // 원본 imageData 사용
-                    const byteCharacters = atob(base64Data.split(',')[1]); // Base64 디코딩
+                    const base64String = base64Data.split(',')[1];
+                    
+                    if (!base64String) {
+                        throw new Error('Base64 데이터를 추출할 수 없습니다');
+                    }
+                    
+                    console.log('   📦 Base64 디코딩 시작, 길이:', base64String.length);
+                    const byteCharacters = atob(base64String); // Base64 디코딩
                     const byteNumbers = new Array(byteCharacters.length);
                     for (let i = 0; i < byteCharacters.length; i++) {
                         byteNumbers[i] = byteCharacters.charCodeAt(i);
@@ -3699,6 +3716,7 @@ class DxfPhotoEditor {
                     const byteArray = new Uint8Array(byteNumbers);
                     const blob = new Blob([byteArray], { type: file.type || 'image/jpeg' });
                     
+                    console.log('   ✅ Blob 생성 완료, 크기:', blob.size, 'bytes');
                     this.downloadBlob(blob, fileName);
                     this.debugLog('   ✓ 원본 파일 다운로드 시작:', fileName, '크기:', blob.size, 'bytes');
                     
@@ -3708,13 +3726,17 @@ class DxfPhotoEditor {
                     }, 500);
                 } catch (error) {
                     console.error('❌ 원본 파일 저장 오류:', error);
-                    console.error('   오류 상세:', error.message, error.stack);
+                    console.error('   오류 상세:', error.message);
+                    console.error('   스택:', error.stack);
+                    console.error('   imageData 타입:', typeof imageData);
+                    console.error('   imageData 길이:', imageData ? imageData.length : 'null');
                     // 원본 파일 저장 실패해도 Google Drive 업로드는 계속 진행
                 }
             }
             
             // Google Drive 자동 저장 (비동기로 실행 - 저장 완료를 기다리지 않음)
             // 사용자가 저장 완료를 기다리지 않고 연속으로 사진을 촬영할 수 있도록
+            console.log('🔄 [v2.0] 8️⃣ Google Drive 자동 저장 시작 (비동기)...');
             this.debugLog('8️⃣ Google Drive 자동 저장 시작 (비동기)...');
             this.showToast('☁️ 저장 중 (구글드라이브)');
             
