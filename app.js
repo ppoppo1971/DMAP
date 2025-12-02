@@ -585,6 +585,15 @@ class DxfPhotoEditor {
                 // ⚠️ 중요: 저장이 진행 중이 아닐 때만 일시 정지
                 // 저장이 진행 중이면 백그라운드에서도 계속 진행되어야 함
                 if (!this.isAutoSaving) {
+                    // 백그라운드 진입 전 저장되지 않은 데이터가 있으면 즉시 저장 시도
+                    const hasUnsavedData = this.photos.some(p => !p.uploaded) || this.metadataDirty;
+                    if (hasUnsavedData) {
+                        console.log('💾 백그라운드 진입 전 저장되지 않은 데이터 감지 - 즉시 저장 시도');
+                        // force=true로 즉시 저장 (백그라운드에서도 계속 진행)
+                        this.autoSave(true).catch(error => {
+                            console.error('❌ 백그라운드 진입 전 자동 저장 오류:', error);
+                        });
+                    }
                     this.pauseAutoSave = true;
                     console.log('⏸️ 백그라운드 모드 진입 - 자동 저장 일시 정지');
                 } else {
@@ -604,6 +613,56 @@ class DxfPhotoEditor {
                         console.error('❌ 포그라운드 복귀 시 자동 저장 오류:', error);
                     });
                 }
+            }
+        });
+        
+        // ⚠️ 중요: 페이지 종료 전 저장되지 않은 데이터 확인 및 저장 시도
+        // beforeunload: 사용자에게 경고 표시 (모바일에서는 제한적)
+        window.addEventListener('beforeunload', (e) => {
+            const hasUnsavedData = this.photos.some(p => !p.uploaded) || this.metadataDirty;
+            if (hasUnsavedData && !this.isAutoSaving) {
+                // 저장되지 않은 데이터가 있으면 저장 시도
+                // ⚠️ 주의: beforeunload에서는 비동기 작업이 완료되지 않을 수 있음
+                // navigator.sendBeacon() 또는 동기 저장을 고려해야 함
+                console.log('⚠️ 페이지 종료 감지 - 저장되지 않은 데이터 있음');
+                
+                // 동기적으로 저장 시도 (제한적이지만 최선의 노력)
+                // 실제로는 navigator.sendBeacon()을 사용하는 것이 더 안전함
+                if (navigator.sendBeacon && window.currentDriveFile) {
+                    // sendBeacon은 작은 데이터만 가능하므로 메타데이터만 저장
+                    const metadata = {
+                        dxfFile: window.currentDriveFile.name,
+                        photos: this.photos.map(p => ({
+                            id: p.id,
+                            fileName: p.fileName || '',
+                            position: { x: p.x, y: p.y },
+                            size: { width: p.width, height: p.height },
+                            memo: p.memo || '',
+                            uploaded: p.uploaded || false
+                        })),
+                        texts: this.texts || [],
+                        lastModified: new Date().toISOString()
+                    };
+                    
+                    // ⚠️ sendBeacon은 POST 요청만 가능하고 인증 헤더 추가가 어려움
+                    // 따라서 실제로는 경고만 표시하고 사용자에게 저장 기회를 제공
+                }
+                
+                // 사용자에게 경고 표시 (데스크탑 브라우저에서만 작동)
+                e.preventDefault();
+                e.returnValue = '저장되지 않은 데이터가 있습니다. 정말 나가시겠습니까?';
+                return e.returnValue;
+            }
+        });
+        
+        // pagehide: 페이지가 숨겨질 때 (모바일에서 더 신뢰성 있음)
+        window.addEventListener('pagehide', (e) => {
+            const hasUnsavedData = this.photos.some(p => !p.uploaded) || this.metadataDirty;
+            if (hasUnsavedData && !this.isAutoSaving) {
+                console.log('⚠️ 페이지 숨김 감지 - 저장되지 않은 데이터 있음');
+                // pagehide에서는 비동기 작업이 완료되지 않을 수 있으므로
+                // 최선의 노력으로만 저장 시도
+                // 실제 저장은 visibilitychange 이벤트에서 처리됨
             }
         });
     }
@@ -3589,9 +3648,42 @@ class DxfPhotoEditor {
                 // 오류 발생 시에도 사용자 작업은 계속 가능하도록
             });
             
+            // iOS Chrome에서 원본 파일을 파일 앱에 자동 저장
+            // 사용자 제스처 컨텍스트 내에서 실행되어야 함 (이미 "사진 사용" 버튼 클릭 시점)
+            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+            const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+            
+            if (isIOS && !isSafari) {
+                // iOS Chrome: 원본 파일을 파일 앱에 자동 저장
+                try {
+                    this.debugLog('8️⃣ iOS Chrome: 원본 파일을 파일 앱에 저장 시작...');
+                    
+                    // 파일명 생성 (Google Drive와 동일한 형식 또는 원본 파일명)
+                    const baseName = this.dxfFileName ? this.dxfFileName.replace(/\.dxf$/i, '') : 'photo';
+                    const now = new Date();
+                    const formatted = `${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
+                    const fileName = `${baseName}_photo_${formatted}.jpg`;
+                    
+                    // 원본 파일을 Blob으로 변환하여 다운로드
+                    // file 객체를 그대로 사용 (원본 파일)
+                    const blob = new Blob([await file.arrayBuffer()], { type: file.type || 'image/jpeg' });
+                    
+                    this.downloadBlob(blob, fileName);
+                    this.debugLog('   ✓ 원본 파일 다운로드 시작:', fileName);
+                    
+                    // 사용자 안내 (약간의 지연 후 표시)
+                    setTimeout(() => {
+                        this.showToast('💾 원본 파일이 다운로드 폴더에 저장되었습니다');
+                    }, 500);
+                } catch (error) {
+                    console.error('❌ 원본 파일 저장 오류:', error);
+                    // 원본 파일 저장 실패해도 Google Drive 업로드는 계속 진행
+                }
+            }
+            
             // 동일 좌표에 추가된 경우 모달 다시 열기
             if (locationInfo && this.currentPhotoGroup.length > 0) {
-                this.debugLog('8️⃣ 동일 좌표 추가 감지, 모달 다시 열기...');
+                this.debugLog('9️⃣ 동일 좌표 추가 감지, 모달 다시 열기...');
                 await this.openPhotoViewModal(photo.id);
             }
             
