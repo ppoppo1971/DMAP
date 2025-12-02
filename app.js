@@ -1650,7 +1650,6 @@ class DxfPhotoEditor {
     
     /**
      * GitHub에서 프로그램을 다시 로드 (캐시 무시)
-     * 강력한 캐시 무시 로직: HTML, CSS, JS 파일 모두 최신 버전으로 로드
      */
     async reloadFromGitHub() {
         try {
@@ -1683,44 +1682,21 @@ class DxfPhotoEditor {
                 }
             }
             
-            // localStorage에 캐시 무시 플래그 설정 (다음 로드 시 스크립트에 타임스탬프 추가)
-            const cacheBuster = Date.now().toString();
-            try {
-                localStorage.setItem('dmap:cacheBuster', cacheBuster);
-                localStorage.setItem('dmap:forceReload', 'true');
-                console.log('✅ 캐시 무시 플래그 설정:', cacheBuster);
-            } catch (error) {
-                console.warn('⚠️ localStorage 설정 실패:', error);
-            }
-            
             // 잠시 대기 후 페이지 새로고침 (캐시 무시)
             await new Promise(resolve => setTimeout(resolve, 300));
             
             // 쿼리 파라미터를 추가하여 강제 새로고침 (캐시 무시)
             const url = new URL(window.location.href);
-            url.searchParams.set('reload', cacheBuster); // 타임스탬프 사용
+            url.searchParams.set('reload', Date.now().toString());
             url.searchParams.set('backToList', 'true'); // 목록 화면으로 돌아갈 것을 표시
-            url.searchParams.set('_nocache', cacheBuster); // 추가 캐시 무시 파라미터
             
-            // ⚠️ 중요: window.location.replace() 사용 (히스토리 스택에 남지 않음)
-            // window.location.href보다 더 강력한 캐시 무시 효과
-            window.location.replace(url.toString());
+            // 페이지 새로고침 (캐시 무시)
+            window.location.href = url.toString();
             
         } catch (error) {
             console.error('❌ GitHub에서 다시 로드 실패:', error);
-            // 오류 발생 시 강제 새로고침 시도
-            try {
-                // localStorage 플래그 설정
-                localStorage.setItem('dmap:forceReload', 'true');
-                // replace() 사용하여 캐시 무시
-                const url = new URL(window.location.href);
-                url.searchParams.set('reload', Date.now().toString());
-                url.searchParams.set('backToList', 'true');
-                window.location.replace(url.toString());
-            } catch (fallbackError) {
-                // 최후의 수단: 일반 새로고침 (deprecated이지만 작동함)
-                window.location.reload(true);
-            }
+            // 오류 발생 시 일반 새로고침 시도
+            window.location.reload(true);
         }
     }
     
@@ -3672,42 +3648,9 @@ class DxfPhotoEditor {
                 // 오류 발생 시에도 사용자 작업은 계속 가능하도록
             });
             
-            // iOS Chrome에서 원본 파일을 파일 앱에 자동 저장
-            // 사용자 제스처 컨텍스트 내에서 실행되어야 함 (이미 "사진 사용" 버튼 클릭 시점)
-            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-            const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
-            
-            if (isIOS && !isSafari) {
-                // iOS Chrome: 원본 파일을 파일 앱에 자동 저장
-                try {
-                    this.debugLog('8️⃣ iOS Chrome: 원본 파일을 파일 앱에 저장 시작...');
-                    
-                    // 파일명 생성 (Google Drive와 동일한 형식 또는 원본 파일명)
-                    const baseName = this.dxfFileName ? this.dxfFileName.replace(/\.dxf$/i, '') : 'photo';
-                    const now = new Date();
-                    const formatted = `${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
-                    const fileName = `${baseName}_photo_${formatted}.jpg`;
-                    
-                    // 원본 파일을 Blob으로 변환하여 다운로드
-                    // file 객체를 그대로 사용 (원본 파일)
-                    const blob = new Blob([await file.arrayBuffer()], { type: file.type || 'image/jpeg' });
-                    
-                    this.downloadBlob(blob, fileName);
-                    this.debugLog('   ✓ 원본 파일 다운로드 시작:', fileName);
-                    
-                    // 사용자 안내 (약간의 지연 후 표시)
-                    setTimeout(() => {
-                        this.showToast('💾 원본 파일이 다운로드 폴더에 저장되었습니다');
-                    }, 500);
-                } catch (error) {
-                    console.error('❌ 원본 파일 저장 오류:', error);
-                    // 원본 파일 저장 실패해도 Google Drive 업로드는 계속 진행
-                }
-            }
-            
             // 동일 좌표에 추가된 경우 모달 다시 열기
             if (locationInfo && this.currentPhotoGroup.length > 0) {
-                this.debugLog('9️⃣ 동일 좌표 추가 감지, 모달 다시 열기...');
+                this.debugLog('8️⃣ 동일 좌표 추가 감지, 모달 다시 열기...');
                 await this.openPhotoViewModal(photo.id);
             }
             
