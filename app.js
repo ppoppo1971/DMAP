@@ -4942,11 +4942,16 @@ class DxfPhotoEditor {
                         photo.uploaded = true;
                         
                         // 명시적 메모리 해제
-                        if (photo.image && photo.image.src) {
-                            photo.image.src = ''; // Image 객체 메모리 해제
+                        // ⚠️ photo.image.src = '' 설정 시 Image 객체가 빈 문자열을 로드하려고 시도하여
+                        // onerror 이벤트가 발생하므로, photo.image = null만 설정
+                        if (photo.image) {
+                            // onerror 핸들러 제거 (오류 이벤트 방지)
+                            photo.image.onerror = null;
+                            photo.image.onload = null;
                         }
                         photo.image = null;
-                        photo.imageData = null;
+                        // photo.imageData는 유지 (사진 모달에서 사용 가능하도록)
+                        // 메모리 절약이 필요하면 주석 해제: photo.imageData = null;
                     });
                     this.metadataDirty = false;
                     console.log('✅ 자동 저장 완료');
