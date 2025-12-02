@@ -28,10 +28,14 @@
  *   - 백그라운드 모드 최적화 (Visibility API)
  *   - Google Maps 이벤트 최적화 (더블 버퍼링)
  * 
- * 버전: 1.1.0
- * 최종 수정: 2025-11-27
+ * 버전: 1.2.0 (원본 파일 로컬 저장 기능 추가)
+ * 최종 수정: 2025-12-02
  * ========================================
  */
+
+// 버전 확인용 로그 (캐시 문제 진단)
+console.log('📱 DMAP 앱 버전: 1.2.0 (원본 파일 로컬 저장 기능 포함)');
+console.log('📅 빌드 시간:', new Date().toISOString());
 
 // 라이브러리 로드 확인
 if (typeof DxfParser === 'undefined') {
@@ -3681,7 +3685,9 @@ class DxfPhotoEditor {
                 // 원본 파일 데이터를 보관하거나 처음 읽을 때 저장해야 함
                 // 여기서는 원본 imageData를 사용하여 Blob 생성
                 try {
-                    console.log('🔄 [v2.0] 7️⃣ iOS Chrome: 원본 파일을 파일 앱에 저장 시작...');
+                    console.log('========================================');
+                    console.log('🔄 [v1.2.0] 7️⃣ iOS Chrome: 원본 파일을 파일 앱에 저장 시작...');
+                    console.log('========================================');
                     this.debugLog('7️⃣ iOS Chrome: 원본 파일을 파일 앱에 저장 시작...');
                     
                     // 파일명 생성 (Google Drive와 동일한 형식 또는 원본 파일명)
@@ -3736,7 +3742,7 @@ class DxfPhotoEditor {
             
             // Google Drive 자동 저장 (비동기로 실행 - 저장 완료를 기다리지 않음)
             // 사용자가 저장 완료를 기다리지 않고 연속으로 사진을 촬영할 수 있도록
-            console.log('🔄 [v2.0] 8️⃣ Google Drive 자동 저장 시작 (비동기)...');
+            console.log('🔄 [v1.2.0] 8️⃣ Google Drive 자동 저장 시작 (비동기)...');
             this.debugLog('8️⃣ Google Drive 자동 저장 시작 (비동기)...');
             this.showToast('☁️ 저장 중 (구글드라이브)');
             
@@ -6313,7 +6319,8 @@ async function waitForDriveReady(timeoutMs = 5000) {
 
 // Google Drive 준비 대기 후 앱 시작
 async function startApp() {
-    console.log('📱 앱 시작...');
+    console.log('📱 앱 시작... (버전 1.2.0)');
+    console.log('🔄 원본 파일 로컬 저장 기능 활성화됨');
     
     // Google Drive Manager가 준비될 때까지 대기 (최대 5초)
     let retries = 0;
