@@ -6140,8 +6140,11 @@ class DxfPhotoEditor {
             optimized: !isMobile
         });
         
-        // 마커 클릭 시 정보창 표시
-        this.currentLocationMarker.addListener('click', () => {
+        // 마커 클릭 시 정보창 표시 (이벤트 전파 방지)
+        this.currentLocationMarker.addListener('click', (e) => {
+            if (e && e.stop) {
+                e.stop(); // 이벤트 전파 방지
+            }
             this.openCurrentLocationInfo();
         });
         
@@ -6195,14 +6198,38 @@ class DxfPhotoEditor {
             this.currentLocationInfoWindow.open(this.map);
         }
         
-        // 지도 클릭 시 정보창 닫기 (이미 등록되어 있으면 중복 방지)
-        if (!this.mapLocationInfoWindowClickListener) {
-            this.mapLocationInfoWindowClickListener = this.map.addListener('click', () => {
-                if (this.currentLocationInfoWindow) {
-                    this.currentLocationInfoWindow.close();
+        // InfoWindow가 열린 후 X 버튼 제거
+        google.maps.event.addListenerOnce(this.currentLocationInfoWindow, 'domready', () => {
+            // X 버튼 찾아서 제거
+            const infoWindowElement = this.currentLocationInfoWindow.getContent();
+            if (infoWindowElement && typeof infoWindowElement === 'string') {
+                // InfoWindow의 DOM 요소 찾기
+                const infoWindowDiv = document.querySelector('.gm-style-iw');
+                if (infoWindowDiv) {
+                    // X 버튼 제거 (여러 선택자 시도)
+                    const closeButton = infoWindowDiv.querySelector('.gm-ui-hover-effect') || 
+                                       infoWindowDiv.querySelector('button[aria-label="Close"]') ||
+                                       infoWindowDiv.querySelector('button[title="Close"]');
+                    if (closeButton) {
+                        closeButton.style.display = 'none';
+                        closeButton.remove();
+                    }
                 }
-            });
+            }
+        });
+        
+        // 기존 리스너 제거 후 새로 등록 (중복 방지)
+        if (this.mapLocationInfoWindowClickListener) {
+            google.maps.event.removeListener(this.mapLocationInfoWindowClickListener);
         }
+        
+        // 지도 클릭 시 정보창 닫기
+        this.mapLocationInfoWindowClickListener = this.map.addListener('click', (e) => {
+            // 마커 클릭이 아닌 지도 영역 클릭인지 확인
+            if (this.currentLocationInfoWindow) {
+                this.currentLocationInfoWindow.close();
+            }
+        });
         
         try {
             const currentZoom = this.map.getZoom();
