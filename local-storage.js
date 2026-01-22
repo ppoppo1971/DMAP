@@ -220,6 +220,30 @@ class LocalStorageManager {
             };
         });
     }
+    
+    /**
+     * 메타데이터 삭제
+     */
+    async deleteMetadata(dxfFileName) {
+        if (!this.db) {
+            await this.init();
+        }
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['metadata'], 'readwrite');
+            const store = transaction.objectStore('metadata');
+            const request = store.delete(dxfFileName);
+            
+            request.onsuccess = () => {
+                console.log(`✅ 메타데이터 삭제 완료: ${dxfFileName}`);
+                resolve();
+            };
+            
+            request.onerror = () => {
+                console.error('❌ 메타데이터 삭제 실패:', request.error);
+                reject(request.error);
+            };
+        });
+    }
 
     /**
      * 사진 삭제

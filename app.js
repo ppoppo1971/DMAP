@@ -185,14 +185,14 @@ class DxfPhotoEditor {
         
         // ViewBox 업데이트 Throttle
         // Android에서는 프레임 간격을 넓혀 스크롤/줌 부드러움 개선
-        const viewBoxThrottleMs = this.isAndroid ? 50 : 16; // Android ~20fps, iOS ~60fps
+        const viewBoxThrottleMs = this.isAndroid ? 80 : 16; // Android ~12.5fps, iOS ~60fps
         this.updateViewBoxThrottled = this.throttle(() => {
             this.updateViewBox();
         }, viewBoxThrottleMs);
         
         // Android 전용 렌더링 간격 (더 강한 최적화)
-        this.androidViewBoxIntervalMs = 50; // 핀치/이동 ViewBox 업데이트 간격
-        this.androidPhotoDrawIntervalMs = 120; // 사진 마커 렌더링 간격
+        this.androidViewBoxIntervalMs = 80; // 핀치/이동 ViewBox 업데이트 간격
+        this.androidPhotoDrawIntervalMs = 200; // 사진 마커 렌더링 간격
         
         this.init();
     }
@@ -1028,16 +1028,15 @@ class DxfPhotoEditor {
         const zoomInBtn = document.getElementById('zoom-in');
         const zoomOutBtn = document.getElementById('zoom-out');
         
+        const zoomStep = 1.5; // 더 세분화된 확대/축소 단계
         zoomInBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            // 확대 단계를 2.5배로 증가: 1.2 * 2.5 = 3.0
-            this.zoom(3.0);
+            this.zoom(zoomStep);
         });
         
         zoomOutBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            // 축소 단계를 2.5배로 증가: 0.8 / 2.5 = 0.32 (또는 1/3.0 = 0.333)
-            this.zoom(1/3.0);
+            this.zoom(1 / zoomStep);
         });
         
         // 줌 버튼 터치 이벤트에서 롱프레스 방지
@@ -2959,7 +2958,10 @@ class DxfPhotoEditor {
                     `${this.viewBox.x} ${this.viewBox.y} ${this.viewBox.width} ${this.viewBox.height}`);
                 
                 // Canvas 사진만 다시 그리기 (빠름)
-                if (this.isAndroid && this.touchState.isDragging) {
+                // Android에서는 드래그/핀치 중 사진 렌더링을 생략하여 부드러움 우선
+                if (this.isAndroid && (this.touchState.isDragging || this.touchState.isPinching)) {
+                    // 드래그/핀치 종료 시 onTouchEnd에서 한 번 갱신
+                } else if (this.isAndroid) {
                     const now = Date.now();
                     if (!this._lastAndroidPhotoDrawTime || (now - this._lastAndroidPhotoDrawTime) >= this.androidPhotoDrawIntervalMs) {
                         this._lastAndroidPhotoDrawTime = now;
@@ -5442,20 +5444,26 @@ class DxfPhotoEditor {
         const remainingPhotos = (await window.localStorageManager.loadPhotos(this.dxfFileName)) || [];
         const metadata = await window.localStorageManager.loadMetadata(this.dxfFileName);
         const texts = metadata?.texts || this.texts || [];
-        const rebuilt = {
-            dxfFile: this.dxfFileName,
-            photos: remainingPhotos.map(photo => ({
-                id: photo.id,
-                fileName: photo.fileName,
-                position: { x: photo.x, y: photo.y },
-                size: { width: photo.width, height: photo.height },
-                memo: photo.memo || '',
-                uploaded: true
-            })),
-            texts,
-            lastModified: new Date().toISOString()
-        };
-        await window.localStorageManager.saveMetadata(this.dxfFileName, rebuilt);
+        
+        if (remainingPhotos.length === 0 && (!texts || texts.length === 0)) {
+            // 사진/텍스트가 없으면 메타데이터도 삭제
+            await window.localStorageManager.deleteMetadata(this.dxfFileName);
+        } else {
+            const rebuilt = {
+                dxfFile: this.dxfFileName,
+                photos: remainingPhotos.map(photo => ({
+                    id: photo.id,
+                    fileName: photo.fileName,
+                    position: { x: photo.x, y: photo.y },
+                    size: { width: photo.width, height: photo.height },
+                    memo: photo.memo || '',
+                    uploaded: true
+                })),
+                texts,
+                lastModified: new Date().toISOString()
+            };
+            await window.localStorageManager.saveMetadata(this.dxfFileName, rebuilt);
+        }
         // 화면 상태 업데이트
         const deleteIds = new Set(toDelete.map(p => p.id));
         this.photos = this.photos.filter(photo => !deleteIds.has(photo.id));
