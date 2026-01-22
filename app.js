@@ -185,10 +185,14 @@ class DxfPhotoEditor {
         
         // ViewBox 업데이트 Throttle
         // Android에서는 프레임 간격을 넓혀 스크롤/줌 부드러움 개선
-        const viewBoxThrottleMs = this.isAndroid ? 33 : 16; // Android ~30fps, iOS ~60fps
+        const viewBoxThrottleMs = this.isAndroid ? 50 : 16; // Android ~20fps, iOS ~60fps
         this.updateViewBoxThrottled = this.throttle(() => {
             this.updateViewBox();
         }, viewBoxThrottleMs);
+        
+        // Android 전용 렌더링 간격 (더 강한 최적화)
+        this.androidViewBoxIntervalMs = 50; // 핀치/이동 ViewBox 업데이트 간격
+        this.androidPhotoDrawIntervalMs = 120; // 사진 마커 렌더링 간격
         
         this.init();
     }
@@ -597,16 +601,24 @@ class DxfPhotoEditor {
         
         // 플랫폼별 UI 조정
         if (this.isAndroid) {
-            // Android: 내보내기 버튼 표시
+            // Android: 내보내기/자료삭제 버튼 표시
             const exportBtn = document.getElementById('menu-export-to-download');
             if (exportBtn) {
                 exportBtn.style.display = 'block';
             }
+            const deleteBtn = document.getElementById('menu-delete-local');
+            if (deleteBtn) {
+                deleteBtn.style.display = 'block';
+            }
         } else {
-            // iOS/데스크탑: 내보내기 버튼 숨김
+            // iOS/데스크탑: 내보내기/자료삭제 버튼 숨김
             const exportBtn = document.getElementById('menu-export-to-download');
             if (exportBtn) {
                 exportBtn.style.display = 'none';
+            }
+            const deleteBtn = document.getElementById('menu-delete-local');
+            if (deleteBtn) {
+                deleteBtn.style.display = 'none';
             }
         }
     }
@@ -782,6 +794,7 @@ class DxfPhotoEditor {
         const currentLocationBtn = document.getElementById('current-location-btn');
         const menuConsoleBtn = document.getElementById('menu-console');
         const menuExportBtn = document.getElementById('menu-export-to-download');
+        const menuDeleteBtn = document.getElementById('menu-delete-local');
         
         console.log('🔍 슬라이딩 메뉴 버튼 확인:', {
             menuBackBtn: !!menuBackBtn,
@@ -789,7 +802,8 @@ class DxfPhotoEditor {
             menuCheckMissingBtn: !!menuCheckMissingBtn,
             menuImageSizeBtn: !!menuImageSizeBtn,
             menuConsoleBtn: !!menuConsoleBtn,
-            menuExportBtn: !!menuExportBtn
+            menuExportBtn: !!menuExportBtn,
+            menuDeleteBtn: !!menuDeleteBtn
         });
         
         if (menuBackBtn) {
@@ -928,8 +942,26 @@ class DxfPhotoEditor {
             console.warn('⚠️ menu-export-to-download 버튼을 찾을 수 없습니다!');
         }
         
+        if (menuDeleteBtn) {
+            menuDeleteBtn.addEventListener('click', async (e) => {
+                console.log('✅ 자료삭제 버튼 클릭됨!');
+                e.stopPropagation();
+                this.closeSlideMenu();
+                await this.openLocalDeleteModal();
+            });
+        } else {
+            console.warn('⚠️ menu-delete-local 버튼을 찾을 수 없습니다!');
+        }
+
+        const closeLocalDeleteBtn = document.getElementById('close-local-delete');
+        if (closeLocalDeleteBtn) {
+            closeLocalDeleteBtn.addEventListener('click', () => {
+                this.closeLocalDeleteModal();
+            });
+        }
+        
         // 메뉴 아이템들 터치 이벤트에서 롱프레스 방지
-        [menuBackBtn, menuFitViewBtn, menuCheckMissingBtn, menuImageSizeBtn, menuMapGoogleBtn, menuMapVworldBtn, menuConsoleBtn, menuExportBtn].forEach(btn => {
+        [menuBackBtn, menuFitViewBtn, menuCheckMissingBtn, menuImageSizeBtn, menuMapGoogleBtn, menuMapVworldBtn, menuConsoleBtn, menuExportBtn, menuDeleteBtn].forEach(btn => {
             if (btn) {
                 btn.addEventListener('touchstart', (e) => {
                     e.stopPropagation();
@@ -2891,7 +2923,8 @@ class DxfPhotoEditor {
         if (isPinching) {
             // 핀치줌 중에는 ViewBox 업데이트를 더 낮은 프레임레이트로 제한 (약 30fps = 33ms)
             // 복잡한 DXF 렌더링 시 성능 개선
-            if (!this._lastViewBoxUpdateTime || (Date.now() - this._lastViewBoxUpdateTime) >= 33) {
+            const viewBoxInterval = this.isAndroid ? this.androidViewBoxIntervalMs : 33;
+            if (!this._lastViewBoxUpdateTime || (Date.now() - this._lastViewBoxUpdateTime) >= viewBoxInterval) {
                 requestAnimationFrame(() => {
                     this.updatePending = false;
                     this._lastViewBoxUpdateTime = Date.now();
@@ -2903,7 +2936,7 @@ class DxfPhotoEditor {
                     // Android에서는 핀치줌 중 사진 렌더링 빈도 낮춤
                     if (this.isAndroid) {
                         const now = Date.now();
-                        if (!this._lastAndroidPhotoDrawTime || (now - this._lastAndroidPhotoDrawTime) >= 66) {
+                        if (!this._lastAndroidPhotoDrawTime || (now - this._lastAndroidPhotoDrawTime) >= this.androidPhotoDrawIntervalMs) {
                             this._lastAndroidPhotoDrawTime = now;
                             this.drawPhotosCanvas();
                         }
@@ -2928,7 +2961,7 @@ class DxfPhotoEditor {
                 // Canvas 사진만 다시 그리기 (빠름)
                 if (this.isAndroid && this.touchState.isDragging) {
                     const now = Date.now();
-                    if (!this._lastAndroidPhotoDrawTime || (now - this._lastAndroidPhotoDrawTime) >= 66) {
+                    if (!this._lastAndroidPhotoDrawTime || (now - this._lastAndroidPhotoDrawTime) >= this.androidPhotoDrawIntervalMs) {
                         this._lastAndroidPhotoDrawTime = now;
                         this.drawPhotosCanvas();
                     }
@@ -5302,6 +5335,132 @@ class DxfPhotoEditor {
         } finally {
             this.showLoading(false);
         }
+    }
+    
+    /**
+     * Android 로컬 저장소 삭제 모달 열기
+     */
+    async openLocalDeleteModal() {
+        if (!this.isAndroid) {
+            this.showToast('⚠️ Android에서만 사용할 수 있습니다');
+            return;
+        }
+        if (!this.dxfFileName) {
+            this.showToast('⚠️ DXF 파일을 먼저 열어주세요');
+            return;
+        }
+        const modal = document.getElementById('local-delete-modal');
+        const list = document.getElementById('local-delete-list');
+        if (!modal || !list) {
+            this.showToast('⚠️ 삭제 모달을 찾을 수 없습니다');
+            return;
+        }
+        list.innerHTML = '';
+        const dates = await this.getLocalStorageDates();
+        if (dates.length === 0) {
+            list.innerHTML = '<div class="info-text">삭제할 날짜가 없습니다.</div>';
+        } else {
+            dates.forEach(dateKey => {
+                const row = document.createElement('div');
+                row.className = 'local-delete-item';
+                
+                const label = document.createElement('div');
+                label.className = 'local-delete-date';
+                label.textContent = dateKey;
+                
+                const btn = document.createElement('button');
+                btn.className = 'btn';
+                btn.style.background = '#FF3B30';
+                btn.textContent = '삭제';
+                btn.addEventListener('click', async () => {
+                    const ok = confirm(`${dateKey} 날짜의 자료를 삭제할까요?`);
+                    if (!ok) return;
+                    await this.deleteLocalDataByDate(dateKey);
+                    await this.openLocalDeleteModal(); // 목록 갱신
+                });
+                
+                row.appendChild(label);
+                row.appendChild(btn);
+                list.appendChild(row);
+            });
+        }
+        modal.classList.add('active');
+    }
+    
+    closeLocalDeleteModal() {
+        const modal = document.getElementById('local-delete-modal');
+        if (modal) {
+            modal.classList.remove('active');
+        }
+    }
+    
+    formatDateKey(timestamp) {
+        if (!timestamp) return null;
+        const date = new Date(timestamp);
+        const yyyy = date.getFullYear();
+        const mm = String(date.getMonth() + 1).padStart(2, '0');
+        const dd = String(date.getDate()).padStart(2, '0');
+        return `${yyyy}-${mm}-${dd}`;
+    }
+    
+    async getLocalStorageDates() {
+        if (!window.localStorageManager) {
+            return [];
+        }
+        if (!window.localStorageManager.db) {
+            await window.localStorageManager.init();
+        }
+        const photos = await window.localStorageManager.loadPhotos(this.dxfFileName);
+        const dateSet = new Set();
+        photos.forEach(photo => {
+            const key = this.formatDateKey(photo.savedAt);
+            if (key) {
+                dateSet.add(key);
+            }
+        });
+        return Array.from(dateSet).sort((a, b) => b.localeCompare(a));
+    }
+    
+    async deleteLocalDataByDate(dateKey) {
+        if (!window.localStorageManager) {
+            this.showToast('⚠️ 로컬 저장소를 사용할 수 없습니다');
+            return;
+        }
+        if (!window.localStorageManager.db) {
+            await window.localStorageManager.init();
+        }
+        const photos = await window.localStorageManager.loadPhotos(this.dxfFileName);
+        const toDelete = photos.filter(photo => this.formatDateKey(photo.savedAt) === dateKey);
+        if (toDelete.length === 0) {
+            this.showToast('⚠️ 해당 날짜의 사진이 없습니다');
+            return;
+        }
+        for (const photo of toDelete) {
+            await window.localStorageManager.deletePhoto(photo.id);
+        }
+        // 메타데이터 재생성 (남은 사진 기준)
+        const remainingPhotos = (await window.localStorageManager.loadPhotos(this.dxfFileName)) || [];
+        const metadata = await window.localStorageManager.loadMetadata(this.dxfFileName);
+        const texts = metadata?.texts || this.texts || [];
+        const rebuilt = {
+            dxfFile: this.dxfFileName,
+            photos: remainingPhotos.map(photo => ({
+                id: photo.id,
+                fileName: photo.fileName,
+                position: { x: photo.x, y: photo.y },
+                size: { width: photo.width, height: photo.height },
+                memo: photo.memo || '',
+                uploaded: true
+            })),
+            texts,
+            lastModified: new Date().toISOString()
+        };
+        await window.localStorageManager.saveMetadata(this.dxfFileName, rebuilt);
+        // 화면 상태 업데이트
+        const deleteIds = new Set(toDelete.map(p => p.id));
+        this.photos = this.photos.filter(photo => !deleteIds.has(photo.id));
+        this.redraw();
+        this.showToast(`✅ ${dateKey} 자료 삭제 완료 (${toDelete.length}개)`);
     }
     
     /**

@@ -176,6 +176,7 @@ class LocalStorageManager {
                     memo: photo.memo,
                     fileName: photo.fileName,
                     imageData: photo.imageData,
+                    savedAt: photo.savedAt,
                     uploaded: false // 로컬 저장이므로 uploaded는 false
                 }));
 
