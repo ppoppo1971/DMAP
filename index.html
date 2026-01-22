@@ -20,7 +20,7 @@ DMAP - DXF 도면 사진 편집기 (UI)
 최적화:
   - touch-action: none (터치 제스처 직접 제어)
   - will-change: transform (GPU 가속)
-  - SVG 선 굵기 줌 반영
+  - vector-effect: non-scaling-stroke (SVG 선 굵기 고정)
   - vConsole 디버깅 콘솔 내장
 
 버전: 1.0.0 (0353)
@@ -187,11 +187,13 @@ DMAP - DXF 도면 사진 편집기 (UI)
         #svg ellipse,
         #svg path,
         #svg polygon {
+            vector-effect: non-scaling-stroke;
         }
         
         /* POINT는 매우 작게 */
         #svg .dxf-point {
             r: 0.03 !important;
+            vector-effect: non-scaling-stroke !important;
         }
 
         #canvas {
@@ -318,24 +320,6 @@ DMAP - DXF 도면 사진 편집기 (UI)
             border-radius: 8px;
             margin-bottom: 15px;
             font-size: 14px;
-        }
-
-        .local-delete-list {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
-        
-        .local-delete-item {
-            display: flex;
-            gap: 10px;
-            align-items: center;
-        }
-        
-        .local-delete-date {
-            flex: 1;
-            font-weight: 600;
-            color: #007AFF;
         }
 
         input[type="file"] {
@@ -981,12 +965,6 @@ DMAP - DXF 도면 사진 편집기 (UI)
         <button class="slide-menu-item" id="menu-console">
             콘솔
         </button>
-        <button class="slide-menu-item" id="menu-export-to-download" style="display: none;">
-            📥 다운로드 폴더로 내보내기
-        </button>
-        <button class="slide-menu-item" id="menu-delete-local" style="display: none;">
-            🧹 자료삭제
-        </button>
     </div>
 
     <!-- 메뉴 배경 오버레이 -->
@@ -1077,20 +1055,6 @@ DMAP - DXF 도면 사진 편집기 (UI)
                 <button class="btn btn-save" id="text-edit-save-btn">수정</button>
                 <button class="btn btn-delete" id="text-edit-delete-btn">제거</button>
             </div>
-        </div>
-    </div>
-
-    <!-- Android 로컬 저장소 삭제 모달 -->
-    <div class="modal" id="local-delete-modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2>🧹 로컬 자료 삭제</h2>
-                <span class="close-btn" id="close-local-delete">&times;</span>
-            </div>
-            <div class="info-box">
-                날짜별로 저장된 사진 데이터를 선택해서 삭제할 수 있습니다.
-            </div>
-            <div id="local-delete-list" class="local-delete-list"></div>
         </div>
     </div>
 
@@ -1251,17 +1215,11 @@ DMAP - DXF 도면 사진 편집기 (UI)
     <!-- Google Maps API (참조 파일과 동일한 API 키 사용) -->
     <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDVwJrvIcbqAOX24g9JODhD7DGtTz7z2Pg&libraries=geometry" async defer></script>
     
-    <!-- 로컬 저장소 모듈 (Android용) -->
-    <script src="local-storage.js"></script>
-    
     <!-- Google Drive 모듈 (먼저 로드) -->
     <script src="google-drive.js"></script>
     
     <!-- Google Identity Services (나중에 로드하여 initGoogleDrive 호출) -->
     <script src="https://accounts.google.com/gsi/client" onload="initGoogleDrive()"></script>
-    
-    <!-- JSZip: Android 내보내기(단일 ZIP)용 -->
-    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     
     <!-- 앱 스크립트 (defer로 라이브러리 로드 후 실행) -->
     <script src="app.js" defer></script>

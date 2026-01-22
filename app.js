@@ -172,42 +172,16 @@ class DxfPhotoEditor {
         this.autoRetryMaxDelay = 60000; // 최대 60초 간격
         this.autoRetryAttempts = new Map(); // 사진별 재시도 횟수 추적
         
+        // ViewBox 업데이트 Throttle (60fps = 16ms)
+        this.updateViewBoxThrottled = this.throttle(() => {
+            this.updateViewBox();
+        }, 16); // ~60fps
+        
         // 백그라운드 모드 최적화
         this.pauseAutoSave = false;
         this.setupVisibilityListener();
         
-        // 플랫폼 감지
-        this.platform = this.detectPlatform();
-        this.isIOS = this.platform === 'ios';
-        this.isAndroid = this.platform === 'android';
-        
-        console.log(`📱 플랫폼 감지: ${this.platform}`);
-        
-        // ViewBox 업데이트 Throttle
-        // Android에서는 프레임 간격을 넓혀 스크롤/줌 부드러움 개선
-        const viewBoxThrottleMs = this.isAndroid ? 80 : 16; // Android ~12.5fps, iOS ~60fps
-        this.updateViewBoxThrottled = this.throttle(() => {
-            this.updateViewBox();
-        }, viewBoxThrottleMs);
-        
-        // Android 전용 렌더링 간격 (더 강한 최적화)
-        this.androidViewBoxIntervalMs = 80; // 핀치/이동 ViewBox 업데이트 간격
-        this.androidPhotoDrawIntervalMs = 200; // 사진 마커 렌더링 간격
-        
         this.init();
-    }
-    
-    /**
-     * 플랫폼 감지
-     */
-    detectPlatform() {
-        const ua = navigator.userAgent;
-        if (/iPad|iPhone|iPod/.test(ua) && !window.MSStream) {
-            return 'ios';
-        } else if (/Android/i.test(ua)) {
-            return 'android';
-        }
-        return 'desktop';
     }
 
     debugLog(...args) {
@@ -326,23 +300,6 @@ class DxfPhotoEditor {
         
         return color;
     }
-
-    /**
-     * 엔티티 선 굵기 계산 (Android 최소 굵기 보정)
-     */
-    getEntityStrokeWidth(entity) {
-        const lineweightRaw = entity?.lineweight;
-        const lineweight = (lineweightRaw !== undefined && lineweightRaw !== null && lineweightRaw >= 0)
-            ? lineweightRaw
-            : 0;
-        const constantWidth = (entity?.constantWidth !== undefined && entity?.constantWidth !== null)
-            ? entity.constantWidth
-            : 0;
-        const actualWidth = Math.max(lineweight, constantWidth);
-        const baseWidth = (actualWidth > 0) ? 2 : 0.5;
-        const minWidth = this.isAndroid ? 1 : 0.5;
-        return Math.max(baseWidth, minWidth);
-    }
     
     autocadColorIndexToHex(colorIndex) {
         // AutoCAD 표준 색상 팔레트 (256색)
@@ -428,21 +385,6 @@ class DxfPhotoEditor {
         this.rectCacheTime = now;
         
         return this.cachedRect;
-    }
-
-    /**
-     * 현재 줌 스케일 계산
-     * - originalViewBox 대비 현재 viewBox 비율
-     * - 과도한 확대/축소는 제한하여 안정적 렌더링
-     */
-    getZoomScale() {
-        const baseWidth = this.originalViewBox?.width || this.viewBox?.width || 1;
-        const currentWidth = this.viewBox?.width || baseWidth;
-        if (!isFinite(baseWidth) || !isFinite(currentWidth) || currentWidth === 0) {
-            return 1;
-        }
-        const scale = baseWidth / currentWidth;
-        return Math.max(0.1, Math.min(scale, 20));
     }
 
     viewToCanvasCoords(x, y) {
@@ -630,29 +572,6 @@ class DxfPhotoEditor {
         this.setupCanvas();
         this.setupEventListeners();
         this.drawWelcomeScreen();
-        
-        // 플랫폼별 UI 조정
-        if (this.isAndroid) {
-            // Android: 내보내기/자료삭제 버튼 표시
-            const exportBtn = document.getElementById('menu-export-to-download');
-            if (exportBtn) {
-                exportBtn.style.display = 'block';
-            }
-            const deleteBtn = document.getElementById('menu-delete-local');
-            if (deleteBtn) {
-                deleteBtn.style.display = 'block';
-            }
-        } else {
-            // iOS/데스크탑: 내보내기/자료삭제 버튼 숨김
-            const exportBtn = document.getElementById('menu-export-to-download');
-            if (exportBtn) {
-                exportBtn.style.display = 'none';
-            }
-            const deleteBtn = document.getElementById('menu-delete-local');
-            if (deleteBtn) {
-                deleteBtn.style.display = 'none';
-            }
-        }
     }
     
     /**
@@ -825,17 +744,13 @@ class DxfPhotoEditor {
         const menuMapVworldBtn = document.getElementById('menu-map-vworld');
         const currentLocationBtn = document.getElementById('current-location-btn');
         const menuConsoleBtn = document.getElementById('menu-console');
-        const menuExportBtn = document.getElementById('menu-export-to-download');
-        const menuDeleteBtn = document.getElementById('menu-delete-local');
         
         console.log('🔍 슬라이딩 메뉴 버튼 확인:', {
             menuBackBtn: !!menuBackBtn,
             menuFitViewBtn: !!menuFitViewBtn,
             menuCheckMissingBtn: !!menuCheckMissingBtn,
             menuImageSizeBtn: !!menuImageSizeBtn,
-            menuConsoleBtn: !!menuConsoleBtn,
-            menuExportBtn: !!menuExportBtn,
-            menuDeleteBtn: !!menuDeleteBtn
+            menuConsoleBtn: !!menuConsoleBtn
         });
         
         if (menuBackBtn) {
@@ -963,37 +878,8 @@ class DxfPhotoEditor {
             console.error('❌ menu-console 버튼을 찾을 수 없습니다!');
         }
         
-        if (menuExportBtn) {
-            menuExportBtn.addEventListener('click', async (e) => {
-                console.log('✅ 다운로드 폴더로 내보내기 버튼 클릭됨!');
-                e.stopPropagation();
-                this.closeSlideMenu();
-                await this.exportToDownloadFolder();
-            });
-        } else {
-            console.warn('⚠️ menu-export-to-download 버튼을 찾을 수 없습니다!');
-        }
-        
-        if (menuDeleteBtn) {
-            menuDeleteBtn.addEventListener('click', async (e) => {
-                console.log('✅ 자료삭제 버튼 클릭됨!');
-                e.stopPropagation();
-                this.closeSlideMenu();
-                await this.openLocalDeleteModal();
-            });
-        } else {
-            console.warn('⚠️ menu-delete-local 버튼을 찾을 수 없습니다!');
-        }
-
-        const closeLocalDeleteBtn = document.getElementById('close-local-delete');
-        if (closeLocalDeleteBtn) {
-            closeLocalDeleteBtn.addEventListener('click', () => {
-                this.closeLocalDeleteModal();
-            });
-        }
-        
         // 메뉴 아이템들 터치 이벤트에서 롱프레스 방지
-        [menuBackBtn, menuFitViewBtn, menuCheckMissingBtn, menuImageSizeBtn, menuMapGoogleBtn, menuMapVworldBtn, menuConsoleBtn, menuExportBtn, menuDeleteBtn].forEach(btn => {
+        [menuBackBtn, menuFitViewBtn, menuCheckMissingBtn, menuImageSizeBtn, menuMapGoogleBtn, menuMapVworldBtn, menuConsoleBtn].forEach(btn => {
             if (btn) {
                 btn.addEventListener('touchstart', (e) => {
                     e.stopPropagation();
@@ -1060,15 +946,16 @@ class DxfPhotoEditor {
         const zoomInBtn = document.getElementById('zoom-in');
         const zoomOutBtn = document.getElementById('zoom-out');
         
-        const zoomStep = 1.5; // 더 세분화된 확대/축소 단계
         zoomInBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            this.zoom(zoomStep);
+            // 확대 단계를 2.5배로 증가: 1.2 * 2.5 = 3.0
+            this.zoom(3.0);
         });
         
         zoomOutBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            this.zoom(1 / zoomStep);
+            // 축소 단계를 2.5배로 증가: 0.8 / 2.5 = 0.32 (또는 1/3.0 = 0.333)
+            this.zoom(1/3.0);
         });
         
         // 줌 버튼 터치 이벤트에서 롱프레스 방지
@@ -2319,25 +2206,19 @@ class DxfPhotoEditor {
             this.metadataDirty = false;
             this.debugLog('   사진/텍스트 데이터 초기화 완료');
             
+            await this.ensureDriveContextForLocalFile(file);
+            
             // 1. 파일 읽기
             const text = await file.text();
+            
             this._parseDxf(text, file.name);
             
-            // 플랫폼별 처리
-            if (this.isAndroid) {
-                // Android: IndexedDB에서 복원 (Google Drive 연동 불필요)
-                await this.restoreFromLocalStorage();
+            if (window.driveManager?.isAccessTokenValid()) {
+                await this.syncLocalDxfToDrive(file);
+                await this.loadMetadataAndDisplay(file.name);
             } else {
-                // iOS/데스크탑: Google Drive 연동
-                await this.ensureDriveContextForLocalFile(file);
-                
-                if (window.driveManager?.isAccessTokenValid()) {
-                    await this.syncLocalDxfToDrive(file);
-                    await this.loadMetadataAndDisplay(file.name);
-                } else {
-                    this.pendingLocalDriveSync = true;
-                    this.showToast('Google Drive 로그인 후 사진/메모가 동기화됩니다.');
-                }
+                this.pendingLocalDriveSync = true;
+                this.showToast('Google Drive 로그인 후 사진/메모가 동기화됩니다.');
             }
             
         } catch (error) {
@@ -2954,8 +2835,7 @@ class DxfPhotoEditor {
         if (isPinching) {
             // 핀치줌 중에는 ViewBox 업데이트를 더 낮은 프레임레이트로 제한 (약 30fps = 33ms)
             // 복잡한 DXF 렌더링 시 성능 개선
-            const viewBoxInterval = this.isAndroid ? this.androidViewBoxIntervalMs : 33;
-            if (!this._lastViewBoxUpdateTime || (Date.now() - this._lastViewBoxUpdateTime) >= viewBoxInterval) {
+            if (!this._lastViewBoxUpdateTime || (Date.now() - this._lastViewBoxUpdateTime) >= 33) {
                 requestAnimationFrame(() => {
                     this.updatePending = false;
                     this._lastViewBoxUpdateTime = Date.now();
@@ -2964,17 +2844,9 @@ class DxfPhotoEditor {
                     this.svg.setAttribute('viewBox', 
                         `${this.viewBox.x} ${this.viewBox.y} ${this.viewBox.width} ${this.viewBox.height}`);
                     
-                    // Android에서는 핀치줌 중 사진 렌더링 빈도 낮춤
-                    if (this.isAndroid) {
-                        const now = Date.now();
-                        if (!this._lastAndroidPhotoDrawTime || (now - this._lastAndroidPhotoDrawTime) >= this.androidPhotoDrawIntervalMs) {
-                            this._lastAndroidPhotoDrawTime = now;
-                            this.drawPhotosCanvas();
-                        }
-                    } else {
-                        // iOS/데스크탑: 정상 렌더링
-                        this.drawPhotosCanvas();
-                    }
+                    // 핀치줌 중에도 사진을 함께 렌더링 (도면과 동기화)
+                    // Canvas 원 그리기는 매우 가벼워서 성능 영향 미미
+                    this.drawPhotosCanvas();
                 });
             } else {
                 // 너무 빈번한 업데이트는 스킵
@@ -2990,18 +2862,7 @@ class DxfPhotoEditor {
                     `${this.viewBox.x} ${this.viewBox.y} ${this.viewBox.width} ${this.viewBox.height}`);
                 
                 // Canvas 사진만 다시 그리기 (빠름)
-                // Android에서는 드래그/핀치 중 사진 렌더링을 생략하여 부드러움 우선
-                if (this.isAndroid && (this.touchState.isDragging || this.touchState.isPinching)) {
-                    // 드래그/핀치 종료 시 onTouchEnd에서 한 번 갱신
-                } else if (this.isAndroid) {
-                    const now = Date.now();
-                    if (!this._lastAndroidPhotoDrawTime || (now - this._lastAndroidPhotoDrawTime) >= this.androidPhotoDrawIntervalMs) {
-                        this._lastAndroidPhotoDrawTime = now;
-                        this.drawPhotosCanvas();
-                    }
-                } else {
-                    this.drawPhotosCanvas();
-                }
+                this.drawPhotosCanvas();
                 
                 // 지도 동기화는 드래그/줌 종료 시점에만 수행 (성능 최적화)
             });
@@ -3142,14 +3003,14 @@ class DxfPhotoEditor {
         
         // 조건부 선 굵기: 실제 굵기가 0 초과면 2px, 아니면 0.5px
         // ⭐ lineweight가 undefined인 경우 처리 개선
-        const lineweight = (entity.lineweight !== undefined && entity.lineweight !== null && entity.lineweight >= 0)
-            ? entity.lineweight
+        const lineweight = (entity.lineweight !== undefined && entity.lineweight !== null && entity.lineweight >= 0) 
+            ? entity.lineweight 
             : (entity.lineweight === undefined || entity.lineweight === null ? -1 : 0);
-        const constantWidth = (entity.constantWidth !== undefined && entity.constantWidth !== null)
-            ? entity.constantWidth
+        const constantWidth = (entity.constantWidth !== undefined && entity.constantWidth !== null) 
+            ? entity.constantWidth 
             : 0;
         const actualWidth = Math.max(lineweight >= 0 ? lineweight : 0, constantWidth);
-        const strokeWidth = this.getEntityStrokeWidth(entity);
+        const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
         
         // 디버그용 데이터 속성 추가
         line.setAttribute('data-lineweight', entity.lineweight);
@@ -3158,7 +3019,7 @@ class DxfPhotoEditor {
         line.setAttribute('data-strokewidth', strokeWidth);
         line.setAttribute('data-layer', entity.layer || '');
         
-        line.setAttribute('style', `stroke-width: ${strokeWidth};`);
+        line.setAttribute('style', `stroke-width: ${strokeWidth}px; vector-effect: non-scaling-stroke;`);
         
         line.setAttribute('stroke-linecap', 'round');
         
@@ -3198,14 +3059,14 @@ class DxfPhotoEditor {
         
         // 조건부 선 굵기: 실제 굵기가 0 초과면 2px, 아니면 0.5px
         // ⭐ lineweight가 undefined인 경우 처리 개선
-        const lineweight = (entity.lineweight !== undefined && entity.lineweight !== null && entity.lineweight >= 0)
-            ? entity.lineweight
+        const lineweight = (entity.lineweight !== undefined && entity.lineweight !== null && entity.lineweight >= 0) 
+            ? entity.lineweight 
             : (entity.lineweight === undefined || entity.lineweight === null ? -1 : 0);
-        const constantWidth = (entity.constantWidth !== undefined && entity.constantWidth !== null)
-            ? entity.constantWidth
+        const constantWidth = (entity.constantWidth !== undefined && entity.constantWidth !== null) 
+            ? entity.constantWidth 
             : 0;
         const actualWidth = Math.max(lineweight >= 0 ? lineweight : 0, constantWidth);
-        const strokeWidth = this.getEntityStrokeWidth(entity);
+        const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
         
         // 디버그용 데이터 속성 추가
         element.setAttribute('data-lineweight', entity.lineweight);
@@ -3214,7 +3075,7 @@ class DxfPhotoEditor {
         element.setAttribute('data-strokewidth', strokeWidth);
         element.setAttribute('data-layer', entity.layer || '');
         
-        element.setAttribute('style', `stroke-width: ${strokeWidth};`);
+        element.setAttribute('style', `stroke-width: ${strokeWidth}px; vector-effect: non-scaling-stroke;`);
         
         element.setAttribute('stroke-linejoin', 'round');
         element.setAttribute('stroke-linecap', 'round');
@@ -3233,8 +3094,11 @@ class DxfPhotoEditor {
         circle.setAttribute('stroke', this.getEntityColor(entity)); // 실제 색상
         
         // 조건부 선 굵기: 실제 굵기가 0 초과면 2px, 아니면 0.5px
-        const strokeWidth = this.getEntityStrokeWidth(entity);
-        circle.setAttribute('style', `stroke-width: ${strokeWidth};`);
+        const lineweight = (entity.lineweight >= 0) ? entity.lineweight : 0;
+        const constantWidth = entity.constantWidth || 0;
+        const actualWidth = Math.max(lineweight, constantWidth);
+        const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
+        circle.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: non-scaling-stroke;`);
         
         return circle;
     }
@@ -3260,8 +3124,11 @@ class DxfPhotoEditor {
         path.setAttribute('stroke', this.getEntityColor(entity)); // 실제 색상
         
         // 조건부 선 굵기: 실제 굵기가 0 초과면 2px, 아니면 0.5px
-        const strokeWidth = this.getEntityStrokeWidth(entity);
-        path.setAttribute('style', `stroke-width: ${strokeWidth};`);
+        const lineweight = (entity.lineweight >= 0) ? entity.lineweight : 0;
+        const constantWidth = entity.constantWidth || 0;
+        const actualWidth = Math.max(lineweight, constantWidth);
+        const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
+        path.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: non-scaling-stroke;`);
         
         return path;
     }
@@ -3447,8 +3314,11 @@ class DxfPhotoEditor {
         polyline.setAttribute('stroke', this.getEntityColor(entity)); // 실제 색상
         
         // 조건부 선 굵기: 실제 굵기가 0 초과면 2px, 아니면 0.5px
-        const strokeWidth = this.getEntityStrokeWidth(entity);
-        polyline.setAttribute('style', `stroke-width: ${strokeWidth};`);
+        const lineweight = (entity.lineweight >= 0) ? entity.lineweight : 0;
+        const constantWidth = entity.constantWidth || 0;
+        const actualWidth = Math.max(lineweight, constantWidth);
+        const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
+        polyline.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: non-scaling-stroke;`);
         
         return polyline;
     }
@@ -3473,8 +3343,11 @@ class DxfPhotoEditor {
         ellipse.setAttribute('stroke', this.getEntityColor(entity)); // 실제 색상
         
         // 조건부 선 굵기: 실제 굵기가 0 초과면 2px, 아니면 0.5px
-        const strokeWidth = this.getEntityStrokeWidth(entity);
-        ellipse.setAttribute('style', `stroke-width: ${strokeWidth};`);
+        const lineweight = (entity.lineweight >= 0) ? entity.lineweight : 0;
+        const constantWidth = entity.constantWidth || 0;
+        const actualWidth = Math.max(lineweight, constantWidth);
+        const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
+        ellipse.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: non-scaling-stroke;`);
         
         return ellipse;
     }
@@ -3526,8 +3399,7 @@ class DxfPhotoEditor {
      */
     drawTexts() {
         const rect = this.getCachedRect();
-        const zoomScale = this.getZoomScale();
-        const margin = 50 * Math.min(Math.max(zoomScale, 1), 4); // 여유 공간 (줌 반영)
+        const margin = 50; // 여유 공간 (텍스트 크기 고려)
         
         // ViewBox 기반 필터링으로 화면에 보이는 텍스트만 선택
         const visibleTexts = this.texts.filter(textObj => {
@@ -3548,9 +3420,8 @@ class DxfPhotoEditor {
             // ViewBox 좌표 → 스크린 좌표 변환 (필터링된 텍스트이므로 이미 화면 내)
             const { x, y } = this.viewToCanvasCoords(textObj.x, textObj.y);
             
-            // 확대 시에도 읽기 쉬운 크기 유지 (최대 36px)
-            const baseFontSize = 9;
-            const fontSize = Math.min(36, Math.max(baseFontSize, baseFontSize * zoomScale));
+            // 고정 크기: 9px (작은 크기, 줌과 무관하게 일정)
+            const fontSize = 9;
             
             this.ctx.save();
             
@@ -3592,8 +3463,7 @@ class DxfPhotoEditor {
      */
     drawPhotos() {
         const rect = this.getCachedRect();
-        const zoomScale = this.getZoomScale();
-        const margin = 50 * Math.min(Math.max(zoomScale, 1), 4); // 여유 공간 (줌 반영)
+        const margin = 50; // 여유 공간 (마커 크기 고려)
         
         // ViewBox 기반 필터링으로 화면에 보이는 사진만 선택
         const visiblePhotos = this.photos.filter(photo => {
@@ -3622,16 +3492,15 @@ class DxfPhotoEditor {
             
             let markerColor;
             let markerRadius;
-            const radiusScale = Math.min(Math.max(zoomScale, 1), 6);
             
             if (isUploaded) {
                 // 업로드 완료 → 빨간점 (작은 크기)
                 markerColor = hasMemo ? '#9B51E0' : '#FF0000'; // 보라색(메모) 또는 빨간색
-                markerRadius = 5.625 * radiusScale; // 줌에 따라 확대
+                markerRadius = 5.625; // 직경 11.25px (기존 1.5배)
             } else {
                 // 업로드 실패/대기 → 초록색 (5배 크기) - 사용자 알림
                 markerColor = '#00C853'; // 초록색 (주의 필요)
-                markerRadius = 18.75 * radiusScale; // 줌에 따라 확대
+                markerRadius = 18.75; // 직경 37.5px (5배 크기)
             }
             
             // 원 그리기
@@ -4246,11 +4115,6 @@ class DxfPhotoEditor {
         
         if (touches.length === 0) {
             // 모든 터치 종료
-            // Android: 드래그/핀치 종료 시 사진 렌더링 즉시 갱신
-            if (this.isAndroid) {
-                this._lastAndroidPhotoDrawTime = 0;
-                this.updateViewBox();
-            }
             
             // 컨텍스트 메뉴가 열려있고, 드래그하지 않았고, 롱프레스가 아니면 메뉴 닫기
             const contextMenu = document.getElementById('context-menu');
@@ -4976,33 +4840,136 @@ class DxfPhotoEditor {
             return;
         }
         
-        // 플랫폼별 저장 전략 분기
+        // Google Drive에 데이터 저장
         console.log('💾 자동 저장 실행 (debounce 완료)...');
-        console.log(`   플랫폼: ${this.platform}`);
+        console.log('   saveToDrive 함수:', typeof window.saveToDrive);
+        console.log('   currentDriveFile:', window.currentDriveFile);
+        
+        if (!window.currentDriveFile && this.localSourceFile) {
+            await this.ensureDriveContextForLocalFile(this.localSourceFile);
+        }
+        
+        if (typeof window.saveToDrive !== 'function') {
+            console.error('❌ saveToDrive 함수를 찾을 수 없습니다');
+            this.showToast('⚠️ 저장 실패: 드라이브 기능을 사용할 수 없습니다');
+            return;
+        }
+        
+        if (!window.currentDriveFile) {
+            console.warn('⚠️ Google Drive 파일 정보가 없습니다 (로컬 파일 또는 로그인 안 됨)');
+            this.showToast('⚠️ 저장 실패: Google Drive에서 파일을 열어주세요');
+            return;
+        }
         
         try {
             this.isAutoSaving = true;
             
-            if (this.isAndroid) {
-                // Android: IndexedDB에 로컬 저장
-                await this.saveToLocalStorage();
-            } else {
-                // iOS/데스크탑: Google Drive 저장 (기존 방식)
-                await this.saveToGoogleDrive();
-            }
+            // 업로드되지 않은 사진만 필터링
+            const newPhotos = this.photos.filter(p => !p.uploaded);
+            const hasNewPhotos = newPhotos.length > 0;
+            const needsMetadataUpdate = this.metadataDirty || hasNewPhotos;
+            
+            console.log('📦 저장할 데이터:', {
+                totalPhotosCount: this.photos.length,
+                newPhotosCount: newPhotos.length,
+                textsCount: this.texts.length,
+                fileName: window.currentDriveFile.name
+            });
+            
+            // 새로운 사진이 있거나 메타데이터가 변경되었을 때만 업로드
+            if (needsMetadataUpdate) {
+                // 저장 중 메시지 표시 (addPhotoAt에서 이미 표시한 경우 중복 방지)
+                // 단, addPhotoAt에서 이미 "☁️ 저장 중 (구글드라이브)"를 표시했으므로
+                // 여기서는 표시하지 않음 (중복 방지)
                 
-        } catch (error) {
-            console.error('❌ 자동 저장 오류:', error);
-            if (this.isAndroid) {
-                this.showToast(`⚠️ 저장 실패: ${error.message}`);
-            } else {
-                if (error && /로그인/.test(error.message || '')) {
-                    this.showToast('로그인이 만료되었습니다. Google Drive 버튼으로 다시 로그인하세요.');
+                const appData = {
+                    photos: newPhotos,  // 새로운 사진만
+                    allPhotos: this.photos,  // 전체 사진 목록 (메타데이터용)
+                    texts: this.texts
+                };
+                
+                const success = await window.saveToDrive(appData, window.currentDriveFile.name);
+                
+                if (success) {
+                    // ⚠️ 중요: Google Drive에 확실히 저장된 사진만 메모리 해제
+                    // saveToDrive() 내에서 개별 사진 업로드 성공 시 photo.uploaded = true 설정됨
+                    // 업로드 실패한 사진은 photo.uploaded = false로 유지됨
+                    let memoryFreedCount = 0;
+                    let memoryKeptCount = 0;
+                    
+                    newPhotos.forEach(photo => {
+                        // ⚠️ 핵심: uploaded === true인 사진만 메모리 해제
+                        // 업로드 실패한 사진은 메모리 유지 (재시도 가능하도록)
+                        if (photo.uploaded === true) {
+                            // Google Drive에 확실히 저장 완료된 사진만 메모리 해제
+                            
+                            // Image 객체 메모리 해제
+                            if (photo.image) {
+                                // onerror 핸들러 제거 (오류 이벤트 방지)
+                                photo.image.onerror = null;
+                                photo.image.onload = null;
+                                photo.image = null;
+                            }
+                            
+                            // 이미지 데이터 메모리 해제 (Google Drive에 저장 완료되었으므로)
+                            photo.imageData = null;
+                            memoryFreedCount++;
+                            
+                            console.log(`   💾 메모리 해제: ${photo.fileName || '사진'}`);
+                        } else {
+                            // 업로드 실패한 사진은 메모리 유지 (재시도 가능하도록)
+                            memoryKeptCount++;
+                            console.log(`   ⚠️ 메모리 유지 (업로드 실패): ${photo.fileName || '사진'}`);
+                        }
+                    });
+                    
+                    if (memoryFreedCount > 0) {
+                        console.log(`✅ 메모리 해제 완료: ${memoryFreedCount}개 사진`);
+                    }
+                    
+                    // 업로드 실패한 사진이 있는지 확인
+                    const stillFailedPhotos = this.photos.filter(p => !p.uploaded && p.imageData);
+                    if (stillFailedPhotos.length > 0) {
+                        console.warn(`⚠️ 메모리 유지 (업로드 실패): ${stillFailedPhotos.length}개 사진`);
+                        // ⚠️ 업로드 실패한 사진이 있으면 자동 재시도 예약
+                        // 단, autoSavePending이 있으면 재시도하지 않음 (중복 방지)
+                        if (!this.autoSavePending) {
+                            this.scheduleAutoRetry();
+                        } else {
+                            console.log('   ⏭️ 자동 재시도 스킵 (autoSavePending이 처리 예정)');
+                        }
+                    } else {
+                        // 모든 사진 업로드 완료 시 자동 재시도 취소 및 재시도 횟수 초기화
+                        this.cancelAutoRetry();
+                    }
+                    
+                    this.metadataDirty = false;
+                    console.log('✅ 자동 저장 완료');
+                    this.showToast('✅ 저장 완료');
+                    
+                    // 화면 다시 그리기 (마커 색상 실시간 업데이트: 초록색 → 빨간색)
+                    // 사진 업로드 완료 후 즉시 마커 색상이 변경되도록
+                    this.redraw();
                 } else {
+                    // 전체 저장 실패: 모든 사진의 메모리 유지 (재시도 가능하도록)
+                    console.error('❌ 자동 저장 실패 (false 반환)');
+                    console.warn('⚠️ 모든 사진의 메모리 유지 (재시도 가능하도록)');
+                    this.showToast('⚠️ 저장 실패');
+                    // ⚠️ 전체 저장 실패 시에도 자동 재시도 예약
                     this.scheduleAutoRetry();
                 }
-                this.showToast(`⚠️ 저장 실패: ${error.message}`);
+            } else {
+                console.log('⏭️ 새로운 사진/메타데이터 변경 없음 - 업로드 스킵');
             }
+        } catch (error) {
+            console.error('❌ 자동 저장 오류:', error);
+            if (error && /로그인/.test(error.message || '')) {
+                this.showToast('로그인이 만료되었습니다. Google Drive 버튼으로 다시 로그인하세요.');
+            } else {
+                // 로그인 오류가 아닌 경우에만 자동 재시도 (로그인 오류는 사용자 개입 필요)
+                this.scheduleAutoRetry();
+            }
+            this.showToast(`⚠️ 저장 실패: ${error.message}`);
         } finally {
             this.isAutoSaving = false;
             
@@ -5028,471 +4995,6 @@ class DxfPhotoEditor {
                 }, 500);
             }
         }
-    }
-    
-    /**
-     * Google Drive에 저장 (iOS/데스크탑용)
-     */
-    async saveToGoogleDrive() {
-        console.log('💾 Google Drive 저장 시작...');
-        
-        if (!window.currentDriveFile && this.localSourceFile) {
-            await this.ensureDriveContextForLocalFile(this.localSourceFile);
-        }
-        
-        if (typeof window.saveToDrive !== 'function') {
-            console.error('❌ saveToDrive 함수를 찾을 수 없습니다');
-            this.showToast('⚠️ 저장 실패: 드라이브 기능을 사용할 수 없습니다');
-            return;
-        }
-        
-        if (!window.currentDriveFile) {
-            console.warn('⚠️ Google Drive 파일 정보가 없습니다 (로컬 파일 또는 로그인 안 됨)');
-            this.showToast('⚠️ 저장 실패: Google Drive에서 파일을 열어주세요');
-            return;
-        }
-        
-        // 업로드되지 않은 사진만 필터링
-        const newPhotos = this.photos.filter(p => !p.uploaded);
-        const hasNewPhotos = newPhotos.length > 0;
-        const needsMetadataUpdate = this.metadataDirty || hasNewPhotos;
-        
-        console.log('📦 저장할 데이터:', {
-            totalPhotosCount: this.photos.length,
-            newPhotosCount: newPhotos.length,
-            textsCount: this.texts.length,
-            fileName: window.currentDriveFile.name
-        });
-        
-        // 새로운 사진이 있거나 메타데이터가 변경되었을 때만 업로드
-        if (needsMetadataUpdate) {
-            const appData = {
-                photos: newPhotos,
-                allPhotos: this.photos,
-                texts: this.texts
-            };
-            
-            const success = await window.saveToDrive(appData, window.currentDriveFile.name);
-            
-            if (success) {
-                // Google Drive에 확실히 저장된 사진만 메모리 해제
-                let memoryFreedCount = 0;
-                
-                newPhotos.forEach(photo => {
-                    if (photo.uploaded === true) {
-                        if (photo.image) {
-                            photo.image.onerror = null;
-                            photo.image.onload = null;
-                            photo.image = null;
-                        }
-                        photo.imageData = null;
-                        memoryFreedCount++;
-                    }
-                });
-                
-                if (memoryFreedCount > 0) {
-                    console.log(`✅ 메모리 해제 완료: ${memoryFreedCount}개 사진`);
-                }
-                
-                // 업로드 실패한 사진이 있는지 확인
-                const stillFailedPhotos = this.photos.filter(p => !p.uploaded && p.imageData);
-                if (stillFailedPhotos.length > 0) {
-                    if (!this.autoSavePending) {
-                        this.scheduleAutoRetry();
-                    }
-                } else {
-                    this.cancelAutoRetry();
-                }
-                
-                this.metadataDirty = false;
-                console.log('✅ Google Drive 저장 완료');
-                this.showToast('✅ 저장 완료');
-                this.redraw();
-            } else {
-                console.error('❌ Google Drive 저장 실패');
-                this.showToast('⚠️ 저장 실패');
-                this.scheduleAutoRetry();
-            }
-        } else {
-            console.log('⏭️ 새로운 사진/메타데이터 변경 없음 - 업로드 스킵');
-        }
-    }
-    
-    /**
-     * IndexedDB에 로컬 저장 (Android용)
-     */
-    async saveToLocalStorage() {
-        if (!this.dxfFileName) {
-            console.warn('⚠️ DXF 파일명이 없습니다');
-            return;
-        }
-        
-        if (!window.localStorageManager) {
-            console.error('❌ LocalStorageManager가 초기화되지 않았습니다');
-            this.showToast('⚠️ 저장 실패: 로컬 저장소를 사용할 수 없습니다');
-            return;
-        }
-        
-        try {
-            // IndexedDB 초기화
-            if (!window.localStorageManager.db) {
-                await window.localStorageManager.init();
-            }
-            
-            console.log('💾 IndexedDB 저장 시작...');
-            console.log(`   파일명: ${this.dxfFileName}`);
-            console.log(`   사진 개수: ${this.photos.length}`);
-            console.log(`   텍스트 개수: ${this.texts.length}`);
-            
-            // 저장되지 않은 사진만 필터링
-            const newPhotos = this.photos.filter(p => !p.uploaded);
-            const hasNewPhotos = newPhotos.length > 0;
-            const needsMetadataUpdate = this.metadataDirty || hasNewPhotos;
-            
-            if (!needsMetadataUpdate) {
-                console.log('⏭️ 새로운 사진/메타데이터 변경 없음 - 저장 스킵');
-                return;
-            }
-            
-            // 사진 저장 (새로운 사진만)
-            if (newPhotos.length > 0) {
-                console.log(`📸 새 사진 저장 시작 (${newPhotos.length}개)...`);
-                
-                for (const photo of newPhotos) {
-                    try {
-                        // 파일명이 없으면 생성
-                        if (!photo.fileName) {
-                            const now = new Date();
-                            const formatted = `${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
-                            const baseName = this.dxfFileName.replace(/\.dxf$/i, '');
-                            photo.fileName = `${baseName}_photo_${formatted}.jpg`;
-                        }
-                        
-                        await window.localStorageManager.savePhoto(photo, this.dxfFileName);
-                        
-                        // ⚠️ 중요: 저장 성공 시 uploaded 플래그를 true로 설정
-                        photo.uploaded = true;
-                        console.log(`   ✅ ${photo.fileName} 저장 완료`);
-                        
-                        // 각 사진 저장 완료 시 즉시 화면 업데이트 (마커 색상 변경: 초록색 → 빨간색)
-                        this.redraw();
-                        
-                    } catch (error) {
-                        console.error(`   ❌ ${photo.fileName || '사진'} 저장 실패:`, error);
-                        photo.uploaded = false; // 저장 실패 상태 유지 (초록색 점 표시)
-                    }
-                }
-            }
-            
-            // 메타데이터 저장
-            const metadata = {
-                dxfFile: this.dxfFileName,
-                photos: this.photos.map(photo => ({
-                    id: photo.id,
-                    fileName: photo.fileName,
-                    position: { x: photo.x, y: photo.y },
-                    size: { width: photo.width, height: photo.height },
-                    memo: photo.memo || '',
-                    uploaded: photo.uploaded || false
-                })),
-                texts: this.texts,
-                lastModified: new Date().toISOString()
-            };
-            
-            await window.localStorageManager.saveMetadata(this.dxfFileName, metadata);
-            
-            this.metadataDirty = false;
-            console.log('✅ IndexedDB 저장 완료');
-            this.showToast('✅ 로컬 저장 완료');
-            
-            // 최종 화면 업데이트
-            this.redraw();
-            
-        } catch (error) {
-            console.error('❌ IndexedDB 저장 실패:', error);
-            throw error;
-        }
-    }
-    
-    /**
-     * IndexedDB에서 데이터 복원 (Android용)
-     */
-    async restoreFromLocalStorage() {
-        if (!this.dxfFileName || !this.isAndroid) {
-            return;
-        }
-        
-        if (!window.localStorageManager) {
-            return;
-        }
-        
-        try {
-            // IndexedDB 초기화
-            if (!window.localStorageManager.db) {
-                await window.localStorageManager.init();
-            }
-            
-            console.log('📥 IndexedDB에서 데이터 복원 중...');
-            
-            // 사진 로드
-            const savedPhotos = await window.localStorageManager.loadPhotos(this.dxfFileName);
-            if (savedPhotos && savedPhotos.length > 0) {
-                // 기존 사진과 병합 (중복 제거)
-                const existingIds = new Set(this.photos.map(p => p.id));
-                const newPhotos = savedPhotos.filter(p => !existingIds.has(p.id));
-                
-                // 이미지 객체 재생성 및 uploaded 플래그 설정
-                for (const photo of newPhotos) {
-                    if (photo.imageData) {
-                        const img = new Image();
-                        img.src = photo.imageData;
-                        photo.image = img;
-                    }
-                    // IndexedDB에서 복원된 사진은 이미 저장된 것이므로 uploaded = true
-                    photo.uploaded = true;
-                }
-                
-                this.photos = [...this.photos, ...newPhotos];
-                console.log(`✅ ${newPhotos.length}개 사진 복원 완료`);
-            }
-            
-            // 메타데이터 로드
-            const metadata = await window.localStorageManager.loadMetadata(this.dxfFileName);
-            if (metadata) {
-                // 텍스트 복원
-                if (metadata.texts && metadata.texts.length > 0) {
-                    const existingTextIds = new Set(this.texts.map(t => t.id));
-                    const newTexts = metadata.texts.filter(t => !existingTextIds.has(t.id));
-                    this.texts = [...this.texts, ...newTexts];
-                    console.log(`✅ ${newTexts.length}개 텍스트 복원 완료`);
-                }
-            }
-            
-            // 화면 다시 그리기
-            this.redraw();
-            
-        } catch (error) {
-            console.error('❌ IndexedDB 복원 실패:', error);
-        }
-    }
-    
-    /**
-     * 다운로드 폴더로 내보내기 (Android용)
-     */
-    async exportToDownloadFolder() {
-        if (!this.dxfFileName) {
-            this.showToast('⚠️ DXF 파일을 먼저 열어주세요');
-            return;
-        }
-        
-        if (!window.localStorageManager) {
-            this.showToast('⚠️ 로컬 저장소를 사용할 수 없습니다');
-            return;
-        }
-        
-        try {
-            this.showLoading(true);
-            this.showToast('📥 다운로드 폴더로 내보내는 중...');
-            
-            // IndexedDB 초기화
-            if (!window.localStorageManager.db) {
-                await window.localStorageManager.init();
-            }
-            
-            // 메타데이터 로드
-            const metadata = await window.localStorageManager.loadMetadata(this.dxfFileName);
-            if (!metadata) {
-                this.showToast('⚠️ 저장된 데이터가 없습니다');
-                return;
-            }
-            
-            const baseName = this.dxfFileName.replace(/\.dxf$/i, '');
-            
-            const photos = await window.localStorageManager.loadPhotos(this.dxfFileName);
-            
-            // JSZip이 있으면 단일 ZIP으로 내보내기 (다중 다운로드 차단 방지)
-            if (typeof JSZip !== 'undefined') {
-                const zip = new JSZip();
-                zip.file(`${baseName}_metadata.json`, JSON.stringify(metadata, null, 2));
-                
-                let addedCount = 0;
-                for (const photo of photos) {
-                    if (!photo.imageData) {
-                        continue;
-                    }
-                    const fileName = photo.fileName || `${baseName}_photo_${photo.id}.jpg`;
-                    const base64 = photo.imageData.includes(',')
-                        ? photo.imageData.split(',')[1]
-                        : null;
-                    if (!base64) {
-                        continue;
-                    }
-                    zip.file(fileName, base64, { base64: true });
-                    addedCount++;
-                }
-                
-                const zipBlob = await zip.generateAsync({ type: 'blob' });
-                this.downloadBlob(zipBlob, `${baseName}_export.zip`);
-                this.showToast(`✅ 내보내기 완료 (ZIP, 사진 ${addedCount}개)`);
-                return;
-            }
-            
-            // 메타데이터 JSON 저장 (JSZip이 없으면 개별 다운로드)
-            const metadataBlob = new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' });
-            this.downloadBlob(metadataBlob, `${baseName}_metadata.json`);
-            
-            // 사진 파일 저장 (브라우저가 다중 다운로드를 차단할 수 있음)
-            for (const photo of photos) {
-                if (!photo.imageData) {
-                    continue;
-                }
-                const fileName = photo.fileName || `${baseName}_photo_${photo.id}.jpg`;
-                const blob = window.localStorageManager.base64ToBlob(photo.imageData, 'image/jpeg');
-                // 약간의 지연을 두어 다운로드가 순차적으로 진행되도록
-                await new Promise(resolve => setTimeout(resolve, 200));
-                this.downloadBlob(blob, fileName);
-            }
-            
-            this.showToast(`✅ 내보내기 완료 (${photos.length}개 파일)`);
-            
-        } catch (error) {
-            console.error('❌ 내보내기 실패:', error);
-            this.showToast(`⚠️ 내보내기 실패: ${error.message}`);
-        } finally {
-            this.showLoading(false);
-        }
-    }
-    
-    /**
-     * Android 로컬 저장소 삭제 모달 열기
-     */
-    async openLocalDeleteModal() {
-        if (!this.isAndroid) {
-            this.showToast('⚠️ Android에서만 사용할 수 있습니다');
-            return;
-        }
-        if (!this.dxfFileName) {
-            this.showToast('⚠️ DXF 파일을 먼저 열어주세요');
-            return;
-        }
-        const modal = document.getElementById('local-delete-modal');
-        const list = document.getElementById('local-delete-list');
-        if (!modal || !list) {
-            this.showToast('⚠️ 삭제 모달을 찾을 수 없습니다');
-            return;
-        }
-        list.innerHTML = '';
-        const dates = await this.getLocalStorageDates();
-        if (dates.length === 0) {
-            list.innerHTML = '<div class="info-text">삭제할 날짜가 없습니다.</div>';
-        } else {
-            dates.forEach(dateKey => {
-                const row = document.createElement('div');
-                row.className = 'local-delete-item';
-                
-                const label = document.createElement('div');
-                label.className = 'local-delete-date';
-                label.textContent = dateKey;
-                
-                const btn = document.createElement('button');
-                btn.className = 'btn';
-                btn.style.background = '#FF3B30';
-                btn.textContent = '삭제';
-                btn.addEventListener('click', async () => {
-                    const ok = confirm(`${dateKey} 날짜의 자료를 삭제할까요?`);
-                    if (!ok) return;
-                    await this.deleteLocalDataByDate(dateKey);
-                    await this.openLocalDeleteModal(); // 목록 갱신
-                });
-                
-                row.appendChild(label);
-                row.appendChild(btn);
-                list.appendChild(row);
-            });
-        }
-        modal.classList.add('active');
-    }
-    
-    closeLocalDeleteModal() {
-        const modal = document.getElementById('local-delete-modal');
-        if (modal) {
-            modal.classList.remove('active');
-        }
-    }
-    
-    formatDateKey(timestamp) {
-        if (!timestamp) return null;
-        const date = new Date(timestamp);
-        const yyyy = date.getFullYear();
-        const mm = String(date.getMonth() + 1).padStart(2, '0');
-        const dd = String(date.getDate()).padStart(2, '0');
-        return `${yyyy}-${mm}-${dd}`;
-    }
-    
-    async getLocalStorageDates() {
-        if (!window.localStorageManager) {
-            return [];
-        }
-        if (!window.localStorageManager.db) {
-            await window.localStorageManager.init();
-        }
-        const photos = await window.localStorageManager.loadPhotos(this.dxfFileName);
-        const dateSet = new Set();
-        photos.forEach(photo => {
-            const key = this.formatDateKey(photo.savedAt);
-            if (key) {
-                dateSet.add(key);
-            }
-        });
-        return Array.from(dateSet).sort((a, b) => b.localeCompare(a));
-    }
-    
-    async deleteLocalDataByDate(dateKey) {
-        if (!window.localStorageManager) {
-            this.showToast('⚠️ 로컬 저장소를 사용할 수 없습니다');
-            return;
-        }
-        if (!window.localStorageManager.db) {
-            await window.localStorageManager.init();
-        }
-        const photos = await window.localStorageManager.loadPhotos(this.dxfFileName);
-        const toDelete = photos.filter(photo => this.formatDateKey(photo.savedAt) === dateKey);
-        if (toDelete.length === 0) {
-            this.showToast('⚠️ 해당 날짜의 사진이 없습니다');
-            return;
-        }
-        for (const photo of toDelete) {
-            await window.localStorageManager.deletePhoto(photo.id);
-        }
-        // 메타데이터 재생성 (남은 사진 기준)
-        const remainingPhotos = (await window.localStorageManager.loadPhotos(this.dxfFileName)) || [];
-        const metadata = await window.localStorageManager.loadMetadata(this.dxfFileName);
-        const texts = metadata?.texts || this.texts || [];
-        
-        if (remainingPhotos.length === 0 && (!texts || texts.length === 0)) {
-            // 사진/텍스트가 없으면 메타데이터도 삭제
-            await window.localStorageManager.deleteMetadata(this.dxfFileName);
-        } else {
-            const rebuilt = {
-                dxfFile: this.dxfFileName,
-                photos: remainingPhotos.map(photo => ({
-                    id: photo.id,
-                    fileName: photo.fileName,
-                    position: { x: photo.x, y: photo.y },
-                    size: { width: photo.width, height: photo.height },
-                    memo: photo.memo || '',
-                    uploaded: true
-                })),
-                texts,
-                lastModified: new Date().toISOString()
-            };
-            await window.localStorageManager.saveMetadata(this.dxfFileName, rebuilt);
-        }
-        // 화면 상태 업데이트
-        const deleteIds = new Set(toDelete.map(p => p.id));
-        this.photos = this.photos.filter(photo => !deleteIds.has(photo.id));
-        this.redraw();
-        this.showToast(`✅ ${dateKey} 자료 삭제 완료 (${toDelete.length}개)`);
     }
     
     /**
