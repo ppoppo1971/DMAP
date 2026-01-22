@@ -5062,9 +5062,44 @@ class DxfPhotoEditor {
             console.log(`   사진 개수: ${this.photos.length}`);
             console.log(`   텍스트 개수: ${this.texts.length}`);
             
-            // 사진 저장
-            if (this.photos.length > 0) {
-                await window.localStorageManager.savePhotos(this.photos, this.dxfFileName);
+            // 저장되지 않은 사진만 필터링
+            const newPhotos = this.photos.filter(p => !p.uploaded);
+            const hasNewPhotos = newPhotos.length > 0;
+            const needsMetadataUpdate = this.metadataDirty || hasNewPhotos;
+            
+            if (!needsMetadataUpdate) {
+                console.log('⏭️ 새로운 사진/메타데이터 변경 없음 - 저장 스킵');
+                return;
+            }
+            
+            // 사진 저장 (새로운 사진만)
+            if (newPhotos.length > 0) {
+                console.log(`📸 새 사진 저장 시작 (${newPhotos.length}개)...`);
+                
+                for (const photo of newPhotos) {
+                    try {
+                        // 파일명이 없으면 생성
+                        if (!photo.fileName) {
+                            const now = new Date();
+                            const formatted = `${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
+                            const baseName = this.dxfFileName.replace(/\.dxf$/i, '');
+                            photo.fileName = `${baseName}_photo_${formatted}.jpg`;
+                        }
+                        
+                        await window.localStorageManager.savePhoto(photo, this.dxfFileName);
+                        
+                        // ⚠️ 중요: 저장 성공 시 uploaded 플래그를 true로 설정
+                        photo.uploaded = true;
+                        console.log(`   ✅ ${photo.fileName} 저장 완료`);
+                        
+                        // 각 사진 저장 완료 시 즉시 화면 업데이트 (마커 색상 변경: 초록색 → 빨간색)
+                        this.redraw();
+                        
+                    } catch (error) {
+                        console.error(`   ❌ ${photo.fileName || '사진'} 저장 실패:`, error);
+                        photo.uploaded = false; // 저장 실패 상태 유지 (초록색 점 표시)
+                    }
+                }
             }
             
             // 메타데이터 저장
@@ -5075,7 +5110,8 @@ class DxfPhotoEditor {
                     fileName: photo.fileName,
                     position: { x: photo.x, y: photo.y },
                     size: { width: photo.width, height: photo.height },
-                    memo: photo.memo || ''
+                    memo: photo.memo || '',
+                    uploaded: photo.uploaded || false
                 })),
                 texts: this.texts,
                 lastModified: new Date().toISOString()
@@ -5086,6 +5122,9 @@ class DxfPhotoEditor {
             this.metadataDirty = false;
             console.log('✅ IndexedDB 저장 완료');
             this.showToast('✅ 로컬 저장 완료');
+            
+            // 최종 화면 업데이트
+            this.redraw();
             
         } catch (error) {
             console.error('❌ IndexedDB 저장 실패:', error);
@@ -5120,13 +5159,15 @@ class DxfPhotoEditor {
                 const existingIds = new Set(this.photos.map(p => p.id));
                 const newPhotos = savedPhotos.filter(p => !existingIds.has(p.id));
                 
-                // 이미지 객체 재생성
+                // 이미지 객체 재생성 및 uploaded 플래그 설정
                 for (const photo of newPhotos) {
                     if (photo.imageData) {
                         const img = new Image();
                         img.src = photo.imageData;
                         photo.image = img;
                     }
+                    // IndexedDB에서 복원된 사진은 이미 저장된 것이므로 uploaded = true
+                    photo.uploaded = true;
                 }
                 
                 this.photos = [...this.photos, ...newPhotos];
