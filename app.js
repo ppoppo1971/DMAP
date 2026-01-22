@@ -65,7 +65,6 @@ class DxfPhotoEditor {
         // SVG 그룹 요소 생성
         this.svgGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         this.svg.appendChild(this.svgGroup);
-        this.svgRendered = false;
         
         // 상태 관리
         this.dxfData = null;
@@ -354,19 +353,6 @@ class DxfPhotoEditor {
         return color;
     }
 
-    /**
-     * 엔티티 선 굵기 (고정 0.5px)
-     */
-    getEntityStrokeWidth(entity) {
-        return 0.5;
-    }
-
-    /**
-     * SVG vector-effect 설정 (Android는 확대 시 선 두께가 함께 커지도록)
-     */
-    getVectorEffectValue() {
-        return 'non-scaling-stroke';
-    }
     
     autocadColorIndexToHex(colorIndex) {
         // AutoCAD 표준 색상 팔레트 (256색)
@@ -2495,7 +2481,6 @@ class DxfPhotoEditor {
         
         const parser = new DxfParser();
         this.dxfData = parser.parseSync(text);
-        this.svgRendered = false;
         
         // 원본 DXF 텍스트 저장 (constantWidth 추출용)
         this.dxfText = text;
@@ -3076,12 +3061,9 @@ class DxfPhotoEditor {
                 return;
             }
             
-            // 1. SVG로 DXF 렌더링 (벡터) - 최초 1회만 수행
-            if (!this.svgRendered) {
-                this.debugLog('      1️⃣ SVG DXF 그리기...');
-                this.drawDxfSvg();
-                this.svgRendered = true;
-            }
+            // 1. SVG로 DXF 렌더링 (벡터)
+            this.debugLog('      1️⃣ SVG DXF 그리기...');
+            this.drawDxfSvg();
             
             // 2. Canvas로 사진 렌더링 (래스터)
             this.debugLog('      2️⃣ Canvas 사진/텍스트 그리기...');
@@ -3190,7 +3172,7 @@ class DxfPhotoEditor {
             ? entity.constantWidth
             : 0;
         const actualWidth = Math.max(lineweight >= 0 ? lineweight : 0, constantWidth);
-        const strokeWidth = this.getEntityStrokeWidth(entity);
+        const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
         
         // 디버그용 데이터 속성 추가
         line.setAttribute('data-lineweight', entity.lineweight);
@@ -3199,7 +3181,7 @@ class DxfPhotoEditor {
         line.setAttribute('data-strokewidth', strokeWidth);
         line.setAttribute('data-layer', entity.layer || '');
         
-        line.setAttribute('style', `stroke-width: ${strokeWidth}px; vector-effect: ${this.getVectorEffectValue()};`);
+        line.setAttribute('style', `stroke-width: ${strokeWidth}px; vector-effect: non-scaling-stroke;`);
         
         line.setAttribute('stroke-linecap', 'round');
         
@@ -3246,7 +3228,7 @@ class DxfPhotoEditor {
             ? entity.constantWidth
             : 0;
         const actualWidth = Math.max(lineweight >= 0 ? lineweight : 0, constantWidth);
-        const strokeWidth = this.getEntityStrokeWidth(entity);
+        const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
         
         // 디버그용 데이터 속성 추가
         element.setAttribute('data-lineweight', entity.lineweight);
@@ -3255,7 +3237,7 @@ class DxfPhotoEditor {
         element.setAttribute('data-strokewidth', strokeWidth);
         element.setAttribute('data-layer', entity.layer || '');
         
-        element.setAttribute('style', `stroke-width: ${strokeWidth}px; vector-effect: ${this.getVectorEffectValue()};`);
+        element.setAttribute('style', `stroke-width: ${strokeWidth}px; vector-effect: non-scaling-stroke;`);
         
         element.setAttribute('stroke-linejoin', 'round');
         element.setAttribute('stroke-linecap', 'round');
@@ -3274,8 +3256,15 @@ class DxfPhotoEditor {
         circle.setAttribute('stroke', this.getEntityColor(entity)); // 실제 색상
         
         // 조건부 선 굵기: 실제 굵기가 0 초과면 2px, 아니면 0.5px
-        const strokeWidth = this.getEntityStrokeWidth(entity);
-        circle.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: ${this.getVectorEffectValue()};`);
+        const lineweight = (entity.lineweight !== undefined && entity.lineweight !== null && entity.lineweight >= 0)
+            ? entity.lineweight
+            : (entity.lineweight === undefined || entity.lineweight === null ? -1 : 0);
+        const constantWidth = (entity.constantWidth !== undefined && entity.constantWidth !== null)
+            ? entity.constantWidth
+            : 0;
+        const actualWidth = Math.max(lineweight >= 0 ? lineweight : 0, constantWidth);
+        const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
+        circle.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: non-scaling-stroke;`);
         
         return circle;
     }
@@ -3301,8 +3290,15 @@ class DxfPhotoEditor {
         path.setAttribute('stroke', this.getEntityColor(entity)); // 실제 색상
         
         // 조건부 선 굵기: 실제 굵기가 0 초과면 2px, 아니면 0.5px
-        const strokeWidth = this.getEntityStrokeWidth(entity);
-        path.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: ${this.getVectorEffectValue()};`);
+        const lineweight = (entity.lineweight !== undefined && entity.lineweight !== null && entity.lineweight >= 0)
+            ? entity.lineweight
+            : (entity.lineweight === undefined || entity.lineweight === null ? -1 : 0);
+        const constantWidth = (entity.constantWidth !== undefined && entity.constantWidth !== null)
+            ? entity.constantWidth
+            : 0;
+        const actualWidth = Math.max(lineweight >= 0 ? lineweight : 0, constantWidth);
+        const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
+        path.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: non-scaling-stroke;`);
         
         return path;
     }
@@ -3488,8 +3484,15 @@ class DxfPhotoEditor {
         polyline.setAttribute('stroke', this.getEntityColor(entity)); // 실제 색상
         
         // 조건부 선 굵기: 실제 굵기가 0 초과면 2px, 아니면 0.5px
-        const strokeWidth = this.getEntityStrokeWidth(entity);
-        polyline.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: ${this.getVectorEffectValue()};`);
+        const lineweight = (entity.lineweight !== undefined && entity.lineweight !== null && entity.lineweight >= 0)
+            ? entity.lineweight
+            : (entity.lineweight === undefined || entity.lineweight === null ? -1 : 0);
+        const constantWidth = (entity.constantWidth !== undefined && entity.constantWidth !== null)
+            ? entity.constantWidth
+            : 0;
+        const actualWidth = Math.max(lineweight >= 0 ? lineweight : 0, constantWidth);
+        const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
+        polyline.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: non-scaling-stroke;`);
         
         return polyline;
     }
@@ -3514,8 +3517,15 @@ class DxfPhotoEditor {
         ellipse.setAttribute('stroke', this.getEntityColor(entity)); // 실제 색상
         
         // 조건부 선 굵기: 실제 굵기가 0 초과면 2px, 아니면 0.5px
-        const strokeWidth = this.getEntityStrokeWidth(entity);
-        ellipse.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: ${this.getVectorEffectValue()};`);
+        const lineweight = (entity.lineweight !== undefined && entity.lineweight !== null && entity.lineweight >= 0)
+            ? entity.lineweight
+            : (entity.lineweight === undefined || entity.lineweight === null ? -1 : 0);
+        const constantWidth = (entity.constantWidth !== undefined && entity.constantWidth !== null)
+            ? entity.constantWidth
+            : 0;
+        const actualWidth = Math.max(lineweight >= 0 ? lineweight : 0, constantWidth);
+        const strokeWidth = (actualWidth > 0) ? 2 : 0.5;
+        ellipse.setAttribute('style', `stroke-width: ${strokeWidth}; vector-effect: non-scaling-stroke;`);
         
         return ellipse;
     }
