@@ -172,11 +172,6 @@ class DxfPhotoEditor {
         this.autoRetryMaxDelay = 60000; // 최대 60초 간격
         this.autoRetryAttempts = new Map(); // 사진별 재시도 횟수 추적
         
-        // ViewBox 업데이트 Throttle (60fps = 16ms)
-        this.updateViewBoxThrottled = this.throttle(() => {
-            this.updateViewBox();
-        }, 16); // ~60fps
-        
         // 백그라운드 모드 최적화
         this.pauseAutoSave = false;
         this.setupVisibilityListener();
@@ -187,6 +182,13 @@ class DxfPhotoEditor {
         this.isAndroid = this.platform === 'android';
         
         console.log(`📱 플랫폼 감지: ${this.platform}`);
+        
+        // ViewBox 업데이트 Throttle
+        // Android에서는 프레임 간격을 넓혀 스크롤/줌 부드러움 개선
+        const viewBoxThrottleMs = this.isAndroid ? 33 : 16; // Android ~30fps, iOS ~60fps
+        this.updateViewBoxThrottled = this.throttle(() => {
+            this.updateViewBox();
+        }, viewBoxThrottleMs);
         
         this.init();
     }
@@ -2898,9 +2900,17 @@ class DxfPhotoEditor {
                     this.svg.setAttribute('viewBox', 
                         `${this.viewBox.x} ${this.viewBox.y} ${this.viewBox.width} ${this.viewBox.height}`);
                     
-                    // 핀치줌 중에도 사진을 함께 렌더링 (도면과 동기화)
-                    // Canvas 원 그리기는 매우 가벼워서 성능 영향 미미
-                    this.drawPhotosCanvas();
+                    // Android에서는 핀치줌 중 사진 렌더링 빈도 낮춤
+                    if (this.isAndroid) {
+                        const now = Date.now();
+                        if (!this._lastAndroidPhotoDrawTime || (now - this._lastAndroidPhotoDrawTime) >= 66) {
+                            this._lastAndroidPhotoDrawTime = now;
+                            this.drawPhotosCanvas();
+                        }
+                    } else {
+                        // iOS/데스크탑: 정상 렌더링
+                        this.drawPhotosCanvas();
+                    }
                 });
             } else {
                 // 너무 빈번한 업데이트는 스킵
@@ -2916,7 +2926,15 @@ class DxfPhotoEditor {
                     `${this.viewBox.x} ${this.viewBox.y} ${this.viewBox.width} ${this.viewBox.height}`);
                 
                 // Canvas 사진만 다시 그리기 (빠름)
-                this.drawPhotosCanvas();
+                if (this.isAndroid && this.touchState.isDragging) {
+                    const now = Date.now();
+                    if (!this._lastAndroidPhotoDrawTime || (now - this._lastAndroidPhotoDrawTime) >= 66) {
+                        this._lastAndroidPhotoDrawTime = now;
+                        this.drawPhotosCanvas();
+                    }
+                } else {
+                    this.drawPhotosCanvas();
+                }
                 
                 // 지도 동기화는 드래그/줌 종료 시점에만 수행 (성능 최적화)
             });
@@ -4169,6 +4187,11 @@ class DxfPhotoEditor {
         
         if (touches.length === 0) {
             // 모든 터치 종료
+            // Android: 드래그/핀치 종료 시 사진 렌더링 즉시 갱신
+            if (this.isAndroid) {
+                this._lastAndroidPhotoDrawTime = 0;
+                this.updateViewBox();
+            }
             
             // 컨텍스트 메뉴가 열려있고, 드래그하지 않았고, 롱프레스가 아니면 메뉴 닫기
             const contextMenu = document.getElementById('context-menu');
