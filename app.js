@@ -65,6 +65,7 @@ class DxfPhotoEditor {
         // SVG 그룹 요소 생성
         this.svgGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         this.svg.appendChild(this.svgGroup);
+        this.svgRendered = false;
         
         // 상태 관리
         this.dxfData = null;
@@ -2450,6 +2451,7 @@ class DxfPhotoEditor {
         
         const parser = new DxfParser();
         this.dxfData = parser.parseSync(text);
+        this.svgRendered = false;
         
         // 원본 DXF 텍스트 저장 (constantWidth 추출용)
         this.dxfText = text;
@@ -3030,9 +3032,12 @@ class DxfPhotoEditor {
                 return;
             }
             
-            // 1. SVG로 DXF 렌더링 (벡터)
-            this.debugLog('      1️⃣ SVG DXF 그리기...');
-            this.drawDxfSvg();
+            // 1. SVG로 DXF 렌더링 (벡터) - 최초 1회만 수행
+            if (!this.svgRendered) {
+                this.debugLog('      1️⃣ SVG DXF 그리기...');
+                this.drawDxfSvg();
+                this.svgRendered = true;
+            }
             
             // 2. Canvas로 사진 렌더링 (래스터)
             this.debugLog('      2️⃣ Canvas 사진/텍스트 그리기...');
@@ -5155,6 +5160,9 @@ class DxfPhotoEditor {
                             const baseName = this.dxfFileName.replace(/\.dxf$/i, '');
                             photo.fileName = `${baseName}_photo_${formatted}.jpg`;
                         }
+                        if (!photo.savedAt) {
+                            photo.savedAt = Date.now();
+                        }
                         
                         await window.localStorageManager.savePhoto(photo, this.dxfFileName);
                         
@@ -5181,6 +5189,7 @@ class DxfPhotoEditor {
                     position: { x: photo.x, y: photo.y },
                     size: { width: photo.width, height: photo.height },
                     memo: photo.memo || '',
+                    savedAt: photo.savedAt || Date.now(),
                     uploaded: photo.uploaded || false
                 })),
                 texts: this.texts,
@@ -5469,6 +5478,7 @@ class DxfPhotoEditor {
                     position: { x: photo.x, y: photo.y },
                     size: { width: photo.width, height: photo.height },
                     memo: photo.memo || '',
+                    savedAt: photo.savedAt || Date.now(),
                     uploaded: true
                 })),
                 texts,
