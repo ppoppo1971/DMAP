@@ -75,6 +75,17 @@ class DxfPhotoEditor {
         this.offsetX = 0;
         this.offsetY = 0;
         
+        // Transform 기반 부드러운 이동/확대 (구글맵 방식)
+        this.transform = {
+            x: 0,           // 이동량 (px)
+            y: 0,           // 이동량 (px)
+            scale: 1,       // 확대 비율
+            originX: 0,     // 확대 중심점 X
+            originY: 0      // 확대 중심점 Y
+        };
+        this.isTransforming = false; // transform 적용 중 여부
+        this.updatePending = false;  // requestAnimationFrame 중복 방지
+        
         // 터치/드래그 상태
         this.touchState = {
             isDragging: false,
@@ -219,6 +230,48 @@ class DxfPhotoEditor {
             return;
         }
         console.log(...args);
+    }
+    
+    /**
+     * SVG Transform 적용 (구글맵 방식 부드러운 이동/확대)
+     * 드래그/핀치 중에는 CSS transform만 변경하여 60fps 부드러운 반응
+     */
+    applyTransform() {
+        if (!this.isTransforming) return;
+        
+        const { x, y, scale, originX, originY } = this.transform;
+        
+        // SVG 그룹에 transform 적용
+        const transformStr = `translate(${x}px, ${y}px) scale(${scale})`;
+        this.svgGroup.style.transform = transformStr;
+        this.svgGroup.style.transformOrigin = `${originX}px ${originY}px`;
+        
+        // Canvas도 동일하게 transform
+        this.canvas.style.transform = transformStr;
+        this.canvas.style.transformOrigin = `${originX}px ${originY}px`;
+    }
+    
+    /**
+     * Transform 초기화 및 ViewBox 최종 업데이트
+     * 터치/드래그 종료 시 호출하여 정확한 좌표로 확정
+     */
+    resetTransform() {
+        if (!this.isTransforming) return;
+        
+        // Transform 초기화
+        this.svgGroup.style.transform = '';
+        this.svgGroup.style.transformOrigin = '';
+        this.canvas.style.transform = '';
+        this.canvas.style.transformOrigin = '';
+        
+        this.transform = { x: 0, y: 0, scale: 1, originX: 0, originY: 0 };
+        this.isTransforming = false;
+        
+        // ViewBox 최종 업데이트
+        this.updateViewBox();
+        
+        // Canvas 사진 마커 최종 렌더링
+        this.drawPhotosCanvas();
     }
     
     /**
@@ -4053,6 +4106,7 @@ class DxfPhotoEditor {
             this.viewBox.width = originalWidth;
             this.viewBox.height = originalHeight;
             
+            // ViewBox 업데이트 (내부에서 requestAnimationFrame 사용)
             this.updateViewBox();
         }
         
@@ -4170,8 +4224,8 @@ class DxfPhotoEditor {
                 this.viewBox.width = originalWidth;
                 this.viewBox.height = originalHeight;
                 
-                // Throttle 적용된 업데이트 (~60fps)
-                this.updateViewBoxThrottled();
+                // ViewBox 업데이트 (내부에서 requestAnimationFrame 사용)
+                this.updateViewBox();
             }
             
             // 현재 위치 저장
@@ -4224,8 +4278,8 @@ class DxfPhotoEditor {
                         height: newHeight
                     };
                     
-                    // Throttle 적용된 업데이트 (~60fps)
-                    this.updateViewBoxThrottled();
+                    // ViewBox 업데이트 (내부에서 requestAnimationFrame 사용)
+                    this.updateViewBox();
                 }
             }
             
@@ -4244,11 +4298,13 @@ class DxfPhotoEditor {
         
         if (touches.length === 0) {
             // 모든 터치 종료
-            // Android: 드래그/핀치 종료 시 사진 렌더링 즉시 갱신
+            // 드래그/핀치 종료 시 최종 렌더링
             if (this.isAndroid) {
                 this._lastAndroidPhotoDrawTime = 0;
-                this.updateViewBox();
             }
+            // ViewBox 최종 업데이트 + Canvas 최종 렌더링
+            this.updateViewBox();
+            this.drawPhotosCanvas();
             
             // 컨텍스트 메뉴가 열려있고, 드래그하지 않았고, 롱프레스가 아니면 메뉴 닫기
             const contextMenu = document.getElementById('context-menu');
@@ -4467,7 +4523,7 @@ class DxfPhotoEditor {
             height: newHeight
         };
         
-        // 빠른 업데이트 (ViewBox만)
+        // ViewBox 업데이트 (내부에서 requestAnimationFrame 사용)
         this.updateViewBox();
         
         // 더블탭 줌 시 지도 동기화는 onTouchEnd에서 처리 (터치 종료 후)
