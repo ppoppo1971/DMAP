@@ -211,6 +211,14 @@ class DxfPhotoEditor {
     /**
      * Android 저사양 모드 적용
      */
+    updateLowPowerMenuLabel() {
+        const lowPowerBtn = document.getElementById('menu-low-power');
+        if (!lowPowerBtn) {
+            return;
+        }
+        lowPowerBtn.textContent = `🔋 저사양 모드: ${this.lowPowerMode ? 'ON' : 'OFF'}`;
+    }
+    
     setPerformanceMode(enableLowPower) {
         if (!this.isAndroid) {
             this.updateViewBoxThrottled = this.throttle(() => {
@@ -226,6 +234,7 @@ class DxfPhotoEditor {
         this.updateViewBoxThrottled = this.throttle(() => {
             this.updateViewBox();
         }, viewBoxThrottleMs);
+        this.updateLowPowerMenuLabel();
     }
 
     debugLog(...args) {
@@ -346,20 +355,10 @@ class DxfPhotoEditor {
     }
 
     /**
-     * 엔티티 선 굵기 계산 (Android 최소 굵기 보정)
+     * 엔티티 선 굵기 (고정 0.5px)
      */
     getEntityStrokeWidth(entity) {
-        const lineweightRaw = entity?.lineweight;
-        const lineweight = (lineweightRaw !== undefined && lineweightRaw !== null && lineweightRaw >= 0)
-            ? lineweightRaw
-            : 0;
-        const constantWidth = (entity?.constantWidth !== undefined && entity?.constantWidth !== null)
-            ? entity.constantWidth
-            : 0;
-        const actualWidth = Math.max(lineweight, constantWidth);
-        const baseWidth = (actualWidth > 0) ? 2 : 0.5;
-        const minWidth = 0.5;
-        return Math.max(baseWidth, minWidth);
+        return 0.5;
     }
 
     /**
@@ -655,7 +654,7 @@ class DxfPhotoEditor {
             const lowPowerBtn = document.getElementById('menu-low-power');
             if (lowPowerBtn) {
                 lowPowerBtn.style.display = 'block';
-                lowPowerBtn.textContent = `🔋 저사양 모드: ${this.lowPowerMode ? 'ON' : 'OFF'}`;
+                this.updateLowPowerMenuLabel();
             }
         } else {
             // iOS/데스크탑: 내보내기/자료삭제/저사양 버튼 숨김
@@ -1006,15 +1005,19 @@ class DxfPhotoEditor {
             console.warn('⚠️ menu-delete-local 버튼을 찾을 수 없습니다!');
         }
 
-        if (menuLowPowerBtn) {
-            menuLowPowerBtn.addEventListener('click', (e) => {
+        const toggleLowPower = (e) => {
+            if (e) {
                 e.stopPropagation();
-                this.closeSlideMenu();
-                const next = !this.lowPowerMode;
-                this.setPerformanceMode(next);
-                menuLowPowerBtn.textContent = `🔋 저사양 모드: ${this.lowPowerMode ? 'ON' : 'OFF'}`;
-                this.showToast(`저사양 모드 ${this.lowPowerMode ? 'ON' : 'OFF'}`);
-            });
+                e.preventDefault?.();
+            }
+            this.closeSlideMenu();
+            const next = !this.lowPowerMode;
+            this.setPerformanceMode(next);
+            this.showToast(`저사양 모드 ${this.lowPowerMode ? 'ON' : 'OFF'}`);
+        };
+        if (menuLowPowerBtn) {
+            menuLowPowerBtn.addEventListener('click', toggleLowPower);
+            menuLowPowerBtn.addEventListener('touchend', toggleLowPower, { passive: false });
         } else {
             console.warn('⚠️ menu-low-power 버튼을 찾을 수 없습니다!');
         }
